@@ -1,83 +1,107 @@
 <div align=center>
-<img align="center" src="public/images/logo.svg" alt="openindoormaps" width="100"/>
-<h1 style="font-family: 'Arial', sans-serif; font-size: 48px; margin: 20px 0; color: #2c3e50;"> OpenIndoorMaps</h1>
+<img align="center" src="public/images/logo.svg" alt="kiptooindoormap" width="100"/>
+<h1 style="font-family: 'Arial', sans-serif; font-size: 48px; margin: 20px 0; color: #2c3e50;">kiptooindoormap</h1>
 <p>
 <img src="https://img.shields.io/badge/version-Pre--Alpha_Dev_Release-green" alt="Pre-Alpha Dev Release"/>
+<img src="https://img.shields.io/badge/maintained_by-kptoo-blue" alt="Maintained by kptoo"/>
 </p>
-<img alt="License badge" src="https://img.shields.io/github/license/openindoormaps/openindoormaps"/>
-<img alt="GitHub last commit badge" src="https://img.shields.io/github/last-commit/openindoormaps/openindoormaps"/>
-<img alt="GitHub commit activity badge" src="https://img.shields.io/github/commit-activity/m/openindoormaps/openindoormaps"/>
-<img alt="GitHub stars" src="https://img.shields.io/github/stars/openindoormaps/openindoormaps"/>
+<img alt="License badge" src="https://img.shields.io/github/license/kptoo/kiptooindoormap"/>
+<img alt="GitHub last commit badge" src="https://img.shields.io/github/last-commit/kptoo/kiptooindoormap"/>
+<img alt="GitHub commit activity badge" src="https://img.shields.io/github/commit-activity/m/kptoo/kiptooindoormap"/>
+<img alt="GitHub stars" src="https://img.shields.io/github/stars/kptoo/kiptooindoormap"/>
 </p>
 </div>
 
-**OpenIndoorMaps** is an open-source project focused on providing a minimalist, self-hostable indoor navigation solution. The goal is to help users navigate complex indoor spaces such as shopping malls, airports, hospitals, and universities, using web-based mapping technologies.
-![Demo of OpenIndoorMaps](https://github.com/user-attachments/assets/343bd636-05e9-4c8c-a6ad-64a53374cbf7)
+## 📍 Overview
 
+**kiptooindoormap** is an open-source, minimalist indoor navigation solution built with modern web technologies. Designed for self-hosting, it empowers users to navigate complex indoor spaces such as shopping malls, airports, hospitals, and universities with ease.
 
-## Release Status
+![Demo of kiptooindoormap](https://github.com/user-attachments/assets/343bd636-05e9-4c8c-a6ad-64a53374cbf7)
+
+## 🛠️ Tech Stack
+
+This project is built with a modern, performance-focused technology stack:
+
+- **TypeScript** (95.8%) - Type-safe, scalable codebase
+- **JavaScript** (2.1%) - Dynamic interactivity
+- **CSS** (2.1%) - Responsive styling
+
+## 📦 Release Status
 
 **Current Version: Pre-Alpha (Map Viewer Demo Only)**
 
-This release is an **early** development version featuring **only a demo** of the map viewer. It allows you to explore the basic indoor navigation functionality. Please note that this demo is limited in scope and is subject to breaking changes as development continues.
+This is an early development release featuring a **demo-only map viewer**. You can explore the basic indoor navigation functionality, but please note that breaking changes may occur as development progresses.
 
-### What's Next?
+### 🚀 What's Coming Next?
 
-We are actively working on expanding the project. The next major steps include:
+We're actively building out the project. Our upcoming milestones include:
 
-- **Map Editor:** A user-friendly tool to create and edit indoor maps.
-- **Backend Integration:** A robust backend to handle indoor map data management and additional features.
+- **Map Editor:** User-friendly tools to create and edit indoor maps
+- **Backend Integration:** Robust infrastructure for map data management and scalability
+- **Enhanced Navigation Features:** Improved pathfinding and accessibility options
 
-Stay tuned for upcoming updates, and feel free to contribute, provide feedback, or report issues.
+Contributions, feedback, and issue reports are always welcome!
 
-## Join Our Community
-We have an active Discord channel for discussions and collaboration. Join us [here](https://discord.gg/znGgpCGDGQ).
+## 💬 Community
 
-## Why OpenIndoorMaps?
+Join our active Discord community for discussions, collaboration, and updates: [Discord Server](https://discord.gg/znGgpCGDGQ)
 
-Many current indoor navigation solutions lack the flexibility and adaptability needed for diverse environments. Often, they are limited in functionality, difficult to customize, or locked behind proprietary systems that restrict user control. Smaller projects, while free, frequently lack the support, scalability, or customization options needed for real-world applications.
+## 🎯 Why kiptooindoormap?
 
-**OpenIndoorMaps** addresses these challenges by:
+Existing indoor navigation solutions often fall short:
+- Limited customization and flexibility
+- Expensive, proprietary systems
+- Lack of community support
+- Difficult to adapt to diverse environments
 
-- Being **self-hostable**: Full control over your deployment, data, and customization.
-- **Open-Source Values**: Focus on transparency, accessibility, and community support.
-- Being built on **OpenStreetMap**: Leverages a trusted, community-driven, and open-source platform.
-- Offering a **customizable** and **minimalist** solution: Tailor the map and navigation experience to your venue’s specific needs without unnecessary complexity or overhead. We aim to create a reliable, flexible, and open alternative to both commercial and limited indoor mapping solutions.
+**kiptooindoormap** solves these problems by offering:
 
-## Key Features
+- ✅ **Self-Hosted Control** - Deploy on your own infrastructure with full customization
+- ✅ **Open-Source** - Transparent, community-driven development
+- ✅ **OSM Integration** - Built on OpenStreetMap's trusted, open platform
+- ✅ **Minimalist Design** - Feature-rich without unnecessary complexity
 
-- **Indoor Navigation**: Provides detailed maps to guide users through large indoor spaces.
-- **Customizable Admin Panel**: Manage and customize maps, routes, and app settings.
-- **Multi-Floor Support**: Seamless navigation across different floors.
-- **API Integration**: Open APIs for integrating third-party services and tools.
+## ✨ Key Features
 
-### What It’s **Not**:
+- 🗺️ **Indoor Navigation** - Detailed, interactive indoor maps for large spaces
+- ⚙️ **Admin Dashboard** - Manage maps, routes, and system configuration
+- 🏢 **Multi-Floor Support** - Seamless navigation across building levels
+- 🔌 **Open API** - Integrate third-party services and custom tools
 
-- **Indoor positioning using wireless technologies** like Wi-Fi or Bluetooth is not planned due to current browser limitations. Instead, we focus on more accessible solutions such as QR codes for position identification.
-- **Native mobile apps**: At this stage, **OpenIndoorMaps** will be web-based. Given the lower current demand for indoor maps, a mobile app is not a priority. However, as use cases grow and evolve, this may be reconsidered in the future.
+## ❌ What It's Not
 
-## Use Cases
+- **Wireless Positioning** - We don't use Wi-Fi/Bluetooth positioning due to browser limitations. Instead, we focus on accessible solutions like QR codes
+- **Native Mobile App** - Currently web-based only. Mobile apps may be considered in the future
 
-**OpenIndoorMaps** can be applied in various industries:
+## 🏢 Use Cases
 
-- **Shopping Malls**: Guide customers through multiple floors and promote store offers.
-- **Hospitals**: Help patients and visitors find their way through complex layouts.
-- **Museums**: Provide interactive tours and detailed information on exhibits.
-- **Trade Shows**: Enable visitors to find booths and gather heatmap data for event optimization.
-- **Universities**: Assist students in navigating campuses and locating classrooms.
-- **Airports**: Navigate gates, baggage claims, and facilities.
-- **Libraries**: Help users find books, study rooms, and resources.
-- **Parking Garages**: Direct drivers to available spaces and exits.
+**kiptooindoormap** serves a wide range of industries:
 
-## Contributing
-We are about to start development soon, and we welcome anyone who is interested or has great ideas! If you have suggestions, feel free to: 
-1. **Create an Issue**: Share your thoughts or feature ideas by opening an issue and describing your concept. 
-2. **Join Our Community**: We have a Discord channel for discussions and collaboration. Please join us [here](https://discord.gg/znGgpCGDGQ).
+| Use Case | Benefits |
+|----------|----------|
+| 🏬 **Shopping Malls** | Guide customers through floors, promote store offers |
+| 🏥 **Hospitals** | Help patients/visitors navigate complex layouts |
+| 🎨 **Museums** | Interactive tours and exhibit information |
+| 🎪 **Trade Shows** | Visitor routing and heatmap analytics |
+| 🎓 **Universities** | Campus navigation and classroom assistance |
+| ✈️ **Airports** | Gate navigation, baggage claim assistance |
+| 📚 **Libraries** | Book discovery and resource location |
+| 🅿️ **Parking Garages** | Space availability and exit navigation |
 
-## License
+## 🤝 Contributing
 
-This project is licensed under the Apache License 2.0. See the [LICENSE](LICENSE) file for more details.
+We're ramping up development and welcome contributors! Here's how you can help:
+
+1. **Open an Issue** - Share feature ideas, suggestions, or bug reports
+2. **Join Our Community** - Discuss plans on our [Discord Server](https://discord.gg/znGgpCGDGQ)
+3. **Submit a PR** - Help us build the future of indoor mapping
+
+## 📄 License
+
+Licensed under Apache License 2.0. See [LICENSE](LICENSE) for details.
 
 ---
 
-Let’s build something great together! 🚀
+**Maintained by [@kptoo](https://github.com/kptoo)**
+
+Let's build something great together! 🚀
