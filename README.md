@@ -42,10 +42,6 @@ We're actively building out the project. Our upcoming milestones include:
 
 Contributions, feedback, and issue reports are always welcome!
 
-## 💬 Community
-
-Join our active Discord community for discussions, collaboration, and updates: [Discord Server](https://discord.gg/znGgpCGDGQ)
-
 ## 🎯 Why kiptooindoormap?
 
 Existing indoor navigation solutions often fall short:
@@ -93,8 +89,7 @@ Existing indoor navigation solutions often fall short:
 We're ramping up development and welcome contributors! Here's how you can help:
 
 1. **Open an Issue** - Share feature ideas, suggestions, or bug reports
-2. **Join Our Community** - Discuss plans on our [Discord Server](https://discord.gg/znGgpCGDGQ)
-3. **Submit a PR** - Help us build the future of indoor mapping
+2. **Submit a PR** - Help us build the future of indoor mapping
 
 ## 📄 License
 
