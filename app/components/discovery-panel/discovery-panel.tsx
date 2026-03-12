@@ -1,4 +1,5 @@
 import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
+import { MapPin, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import building from "~/mock/building.json";
 import useMapStore from "~/stores/use-map-store";
@@ -6,7 +7,7 @@ import useMapStore from "~/stores/use-map-store";
 import useDirections from "~/hooks/use-directions";
 import { useIndoorGeocoder } from "~/hooks/use-indoor-geocder";
 import { POI } from "~/types/poi";
-import { Card, CardContent } from "../ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import DiscoveryView from "./discovery-view";
 import LocationDetail from "./location-detail";
 import NavigationView from "./navigation-view";
@@ -89,6 +90,20 @@ export default function DiscoveryPanel() {
 
   return (
     <Card className="absolute z-10 w-full rounded-xl shadow-lg md:absolute md:left-4 md:top-4 md:max-w-[23.5rem]">
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+        <div className="flex items-center space-x-2">
+          <MapPin className="h-5 w-5" />
+          <CardTitle>KiptooIndoorMap</CardTitle>
+        </div>
+        {mode !== "discovery" && (
+          <button
+            onClick={handleBackClick}
+            className="rounded-lg hover:bg-muted"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
+      </CardHeader>
       <CardContent className="p-4">
         {mode === "discovery" && (
           <DiscoveryView
