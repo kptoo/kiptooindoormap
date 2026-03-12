@@ -1,6 +1,8 @@
 import type { MetaFunction } from "@remix-run/node";
+import { useEffect } from "react";
 import MapComponent from "~/components/map-component";
 import { Analytics } from "@vercel/analytics/remix";
+import { useSetTheme } from "remix-themes";
 
 export const meta: MetaFunction = () => {
   return [
@@ -14,6 +16,13 @@ export const meta: MetaFunction = () => {
 };
 
 export default function Index() {
+  const setTheme = useSetTheme();
+
+  useEffect(() => {
+    // Set dark theme as default
+    setTheme("dark");
+  }, [setTheme]);
+
   return (
     <div className="flex h-svh items-center justify-center">
       <Analytics />
