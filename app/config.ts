@@ -16,7 +16,7 @@ const config = {
   } as maplibregl.MapOptions,
   mapStyles: {
     light: "https://tiles.openfreemap.org/styles/bright",
-    dark: "/styles/dark/style.json",
+    dark: "https://tiles.openfreemap.org/styles/liberty",
   },
 };
 
