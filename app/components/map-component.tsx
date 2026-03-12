@@ -8,6 +8,7 @@ import IndoorMapLayer from "~/layers/indoor-map-layer";
 import POIsLayer from "~/layers/pois-layer";
 import building from "~/mock/building.json";
 import useMapStore from "~/stores/use-map-store";
+import ContactBanner from "./contact-banner";
 import DiscoveryPanel from "./discovery-panel/discovery-panel";
 import { FloorSelector } from "./floor-selector";
 import { FloorUpDownControl } from "./floor-up-down-control";
@@ -85,6 +86,7 @@ export default function MapComponent() {
       )}
 
       <div ref={mapContainer} className="size-full" />
+      <ContactBanner />
     </div>
   );
 }
