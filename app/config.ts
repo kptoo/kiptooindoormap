@@ -5,13 +5,14 @@ const config = {
   geoCodingApi: "https://nominatim.openstreetmap.org",
   routingApi: "https://router.project-osrm.org/route/v1",
   mapConfig: {
-    center: [3.110_97, 45.758_887],
-    zoom: isMobile ? 17 : 18.5,
-    bearing: 60,
+    // LAX Airport area (Los Angeles International Airport)
+    center: [-118.4085, 33.9425],
+    zoom: isMobile ? 15 : 16.5,
+    bearing: 0,
     pitch: 40,
     maxBounds: [
-      [3.098_579_765_873_666, 45.753_206_988_746_97],
-      [3.120_672_060_142_396_7, 45.764_883_726_343_584],
+      [-118.440, 33.920],
+      [-118.380, 33.965],
     ],
   } as maplibregl.MapOptions,
   mapStyles: {
