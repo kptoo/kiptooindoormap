@@ -18,7 +18,6 @@ import ContactBanner from "./contact-banner";
 import DiscoveryPanel from "./discovery-panel/discovery-panel";
 import { FloorSelector } from "./floor-selector";
 import { FloorUpDownControl } from "./floor-up-down-control";
-import { TerminalSelector } from "./terminal-selector";
 import "~/maplibre.css";
 
 export default function MapComponent() {
@@ -26,35 +25,42 @@ export default function MapComponent() {
   const [theme] = useTheme();
 
   const setMapInstance = useMapStore((state) => state.setMapInstance);
-  const { setIsLoading, setAirportData, setAvailableTerminals } = useAirportStore();
+  const { setIsLoading, setAirportData, setAvailableTerminals } =
+    useAirportStore();
   const { setCurrentFloor } = useFloorStore();
 
   // IndoorMapLayer is stateful — keep a stable ref
   const [indoorMapLayer] = useState(
-    () => new IndoorMapLayer({ type: "FeatureCollection", features: [] } as IndoorMapGeoJSON, theme as string),
+    () =>
+      new IndoorMapLayer(
+        { type: "FeatureCollection", features: [] } as IndoorMapGeoJSON,
+        theme as string,
+      ),
   );
   const [routingLayer] = useState(
-    () => new RoutingLayer({ type: "FeatureCollection", features: [] }, theme as string),
+    () =>
+      new RoutingLayer(
+        { type: "FeatureCollection", features: [] },
+        theme as string,
+      ),
   );
 
   // ── Load airport data on mount ────────────────────────────────────────────
   useEffect(() => {
     setIsLoading(true);
-    loadAirportData() // loads ALL terminals by default
+    loadAirportData()
       .then((data) => {
         setAirportData(data);
         setAvailableTerminals(data.terminals);
-        // Default to the lowest available floor
         const defaultFloor = data.floors[0] ?? 1;
         setCurrentFloor(defaultFloor);
         indoorMapLayer.updateData(data.indoor_map);
         routingLayer.updateData(data.routing);
-        // Apply the default floor filter after data is set
         indoorMapLayer.setFloorLevel(defaultFloor);
       })
       .catch((err) => console.error("Failed to load airport data:", err))
       .finally(() => setIsLoading(false));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // intentionally run once on mount
 
   // ── Initialise MapLibre ───────────────────────────────────────────────────
@@ -72,7 +78,12 @@ export default function MapComponent() {
       try {
         map.addLayer(indoorMapLayer);
         map.addLayer(routingLayer);
-        map.addLayer(new POIsLayer({ type: "FeatureCollection", features: [] }, theme as string));
+        map.addLayer(
+          new POIsLayer(
+            { type: "FeatureCollection", features: [] },
+            theme as string,
+          ),
+        );
       } catch (error) {
         console.error("Failed to initialise map layers:", error);
       }
@@ -96,17 +107,15 @@ export default function MapComponent() {
     return () => {
       map.remove();
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme]); // re-init map when theme changes
 
   return (
     <div className="flex size-full flex-col">
-      <DiscoveryPanel />
+      {/* DiscoveryPanel now owns the terminal selector internally */}
+      <DiscoveryPanel indoorMapLayer={indoorMapLayer} />
 
-      {/* Terminal selector — always visible */}
-      <TerminalSelector indoorMapLayer={indoorMapLayer} />
-
-      {/* Floor controls — always visible (not dev-only any more) */}
+      {/* Floor controls */}
       <FloorSelector indoorMapLayer={indoorMapLayer} />
       <FloorUpDownControl indoorMapLayer={indoorMapLayer} />
 
