@@ -1,31 +1,30 @@
 import "@maplibre/maplibre-gl-geocoder/dist/maplibre-gl-geocoder.css";
 import { MapPin, X } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import building from "~/mock/building.json";
-import useMapStore from "~/stores/use-map-store";
-
 import useDirections from "~/hooks/use-directions";
 import { useIndoorGeocoder } from "~/hooks/use-indoor-geocder";
+import IndoorMapLayer from "~/layers/indoor-map-layer";
+import useMapStore from "~/stores/use-map-store";
 import { POI } from "~/types/poi";
+import poiMap from "~/utils/poi-map";
+import { MapGeoJSONFeature, MapMouseEvent } from "maplibre-gl";
 import { Card, CardContent, CardHeader, CardTitle } from "../ui/card";
 import DiscoveryView from "./discovery-view";
 import LocationDetail from "./location-detail";
 import NavigationView from "./navigation-view";
-import poiMap from "~/utils/poi-map";
-import { MapGeoJSONFeature, MapMouseEvent } from "maplibre-gl";
 
 type UIMode = "discovery" | "detail" | "navigation";
 
-export default function DiscoveryPanel() {
+interface DiscoveryPanelProps {
+  indoorMapLayer: IndoorMapLayer;
+}
+
+export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) {
   const map = useMapStore((state) => state.mapInstance);
   const [mode, setMode] = useState<UIMode>("discovery");
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
   const { indoorDirections } = useDirections(map);
   const indoorGeocoder = useIndoorGeocoder();
-
-  indoorDirections?.loadMapData(
-    building.indoor_routes as GeoJSON.FeatureCollection,
-  );
 
   const navigateToPOI = useCallback(
     (coordinates: GeoJSON.Position) => {
@@ -66,7 +65,6 @@ export default function DiscoveryPanel() {
       if (relatedPOIs && relatedPOIs[0]) {
         const firstPOI = relatedPOIs[0];
 
-        //TODO: find cleaner way to convert GeoJSON.Feature to POI
         const poi: POI = {
           id: firstPOI.properties?.id as number,
           name: firstPOI.properties?.name as string,
@@ -109,6 +107,7 @@ export default function DiscoveryPanel() {
           <DiscoveryView
             indoorGeocoder={indoorGeocoder}
             onSelectPOI={handleSelectPOI}
+            indoorMapLayer={indoorMapLayer}
           />
         )}
         {mode === "detail" && selectedPOI && (
