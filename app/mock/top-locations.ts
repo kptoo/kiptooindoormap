@@ -41,13 +41,11 @@ const topLocations: TopLocation[] = [
   {
     name: "Food",
     iconSrc: "/icons/food-fork-kitchen-knife-meanns-restaurant_81404.png",
-    colors:
-      "bg-orange-100 text-orange-700 dark:bg-orange-700 dark:text-orange-100",
+    colors: "bg-orange-100 text-orange-700 dark:bg-orange-700 dark:text-orange-100",
   },
   {
     name: "Shops",
-    iconSrc:
-      "/icons/shop_retail_commerce_ecommerce_buy_cart_shopping_icon_260524.png",
+    iconSrc: "/icons/shop_retail_commerce_ecommerce_buy_cart_shopping_icon_260524.png",
     colors: "bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-100",
   },
   {
