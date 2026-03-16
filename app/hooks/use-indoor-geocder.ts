@@ -1,25 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useMemo } from "react";
+import useAirportStore from "~/stores/airport-store";
 import { IndoorGeocoder, POIFeature } from "~/utils/indoor-geocoder";
-import building from "~/mock/building.json";
 
 export function useIndoorGeocoder() {
-  const geocoderRef = useRef<IndoorGeocoder | null>(null);
+  const airportData = useAirportStore((s) => s.airportData);
 
-  if (!geocoderRef.current) {
-    geocoderRef.current = new IndoorGeocoder(
-      building.pois.features as POIFeature[],
-    );
-  }
+  const poiFeatures = useMemo(() => {
+    const features = airportData?.pois?.features ?? [];
+    // Geocoder expects Point features; loader routes points into airportData.pois citecall_dGVYFmH79DyhOS4AJpwnA4Lu
+    return features as POIFeature[];
+  }, [airportData]);
 
-  useEffect(() => {
-    // TODO: Implement data loading when API is ready
-    // const loadData = async () => {
-    //   if (geocoderRef.current) {
-    //     await geocoderRef.current.loadData();
-    //   }
-    // };
-    // loadData();
-  }, []);
+  const indoorGeocoder = useMemo(() => {
+    return new IndoorGeocoder(poiFeatures);
+  }, [poiFeatures]);
 
-  return geocoderRef.current;
+  return { indoorGeocoder, poiFeatures };
 }
