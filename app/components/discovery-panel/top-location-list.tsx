@@ -1,15 +1,8 @@
-import { LucideProps } from "lucide-react";
 import { Button } from "../ui/button";
+import type { TopLocation } from "~/mock/top-locations";
 
-interface location {
-  name: string;
-  icon: React.ForwardRefExoticComponent<
-    Omit<LucideProps, "ref"> & React.RefAttributes<SVGSVGElement>
-  >;
-  colors: string;
-}
 interface TopLocationsListProps {
-  locations: location[];
+  locations: TopLocation[];
   onLocationClick: (name: string) => void;
 }
 
@@ -28,7 +21,12 @@ export function TopLocationsList({
             title={location.name}
             onClick={() => onLocationClick(location.name)}
           >
-            <location.icon size={16} />
+            <img
+              src={location.iconSrc}
+              alt=""
+              className="size-4 object-contain"
+              aria-hidden="true"
+            />
           </Button>
           <span className="mt-1 max-w-[80px] hyphens-auto break-words text-center text-xs text-gray-600 dark:text-gray-300">
             {location.name}
