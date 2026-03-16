@@ -3,9 +3,19 @@ import { POI } from "~/types/poi";
 
 interface POIProperties {
   id?: number;
-  name: string;
-  type?: string;
-  floor?: number;
+  name?: string | null;
+
+  // injected by loader:
+  category?: string | null;
+  level_id?: number | null;
+  terminal_id?: string | null;
+  layer_type?: string | null;
+  gate_num?: string | null;
+
+  // optional legacy/other:
+  type?: string | null;
+  floor?: number | null;
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   metadata?: Record<string, any>;
   building_id?: string;
@@ -15,11 +25,48 @@ export interface POIFeature extends GeoJSON.Feature<GeoJSON.Point> {
   properties: POIProperties;
 }
 
+function normalizeToken(v: unknown): string {
+  return String(v ?? "").trim();
+}
+
+function buildDisplayName(props: POIProperties): string {
+  const explicit = normalizeToken(props.name);
+  if (explicit) return explicit;
+
+  // Gates commonly have gate_num but no explicit name in some datasets
+  const gateNum = normalizeToken(props.gate_num);
+  if (gateNum) return `Gate ${gateNum}`;
+
+  // Otherwise fall back to something useful (category/layer_type)
+  const category = normalizeToken(props.category);
+  if (category) return category;
+
+  const layerType = normalizeToken(props.layer_type);
+  if (layerType) return layerType;
+
+  return "Unknown";
+}
+
+function buildSearchText(props: POIProperties, displayName: string): string {
+  // Include everything a user might type
+  const parts = [
+    displayName,
+    props.name,
+    props.category,
+    props.layer_type,
+    props.terminal_id,
+    props.gate_num,
+    props.level_id,
+    props.floor,
+    props.type,
+  ].map(normalizeToken);
+
+  // De-dupe + join
+  return Array.from(new Set(parts.filter(Boolean))).join(" ");
+}
+
 /**
  * IndoorGeocoder encapsulates search functionality using MiniSearch.
- * It is designed to handle cases where MiniSearch may return a large set of results.
- * The class uses a cutoff threshold to filter out results that are significantly less relevant
- * compared to the top result, ensuring that only the most pertinent suggestions are provided.
  */
 export class IndoorGeocoder {
   private miniSearch: MiniSearch;
@@ -27,17 +74,22 @@ export class IndoorGeocoder {
 
   constructor(pois: POIFeature[], cutoffThreshold: number = 0.3) {
     this.cutoffThreshold = cutoffThreshold;
+
     this.miniSearch = new MiniSearch({
-      fields: ["name"],
-      storeFields: ["name", "type", "geometry", "id"],
-      // MiniSearch defaults to idField: "id" (we keep that)
+      // Search across both the visible name AND a combined text field
+      fields: ["name", "searchText"],
+      storeFields: ["name", "geometry", "id"],
+      // MiniSearch defaults to idField: "id"
+      searchOptions: {
+        prefix: true, // makes typing feel like autocomplete
+        fuzzy: 0.2, // tolerate minor typos
+      },
     });
 
     const flattenPOIs = pois.map((feature: POIFeature, index: number) => {
       const props = feature.properties ?? ({} as POIProperties);
 
-      // MiniSearch requires every document to have an `id` field.
-      // Our loader sets GeoJSON Feature.id, but not necessarily properties.id.
+      // Ensure we always have an id for MiniSearch
       const fallbackId =
         typeof (props as any).id === "number"
           ? (props as any).id
@@ -47,10 +99,14 @@ export class IndoorGeocoder {
               ? Number(feature.id)
               : index;
 
+      const displayName = buildDisplayName(props);
+      const searchText = buildSearchText(props, displayName);
+
       return {
         ...props,
         id: fallbackId,
-        type: (props as any).type ?? "",
+        name: displayName,
+        searchText,
         geometry: feature.geometry,
       };
     });
@@ -58,13 +114,6 @@ export class IndoorGeocoder {
     this.miniSearch.addAll(flattenPOIs);
   }
 
-  /**
-   * Given an input string, returns the coordinates of the top search result.
-   * If MiniSearch returns too many results, only the best match is used.
-   *
-   * @param input - The search input.
-   * @returns The coordinates of the top search result.
-   */
   public indoorGeocodeInput(input: string): POI {
     const results = this.miniSearch.search(input);
     if (results.length === 0) {
@@ -78,28 +127,15 @@ export class IndoorGeocoder {
     };
   }
 
-  /**
-   * Provides search suggestions based on a query string.
-   * Uses a cutoff logic to filter out suggestions that have a score difference
-   * exceeding a specified threshold relative to the top result.
-   *
-   * This is particularly useful when MiniSearch returns a very large set of results,
-   * some of which are only marginally relevant.
-   *
-   * @param query - The query string.
-   * @returns An array of suggestions with name and coordinates.
-   */
   public getAutocompleteResults(query: string, maxResults: number = 5): Array<POI> {
     if (!query) return [];
 
-    const results = this.miniSearch.search(query, { prefix: true });
+    const results = this.miniSearch.search(query);
     if (results.length === 0) return [];
 
     const topScore = results[0].score;
     const cutoffIndex = this.getCutoffIndex(results, topScore);
 
-    // If a cutoff is determined, use only the more relevant results.
-    // Otherwise, default to the top 5 results.
     const relevantResults =
       cutoffIndex > 0 ? results.slice(0, cutoffIndex) : results.slice(0, 5);
 
@@ -112,18 +148,9 @@ export class IndoorGeocoder {
       .slice(0, maxResults);
   }
 
-  /**
-   * Determines the cutoff index for the results array based on the score difference.
-   * If the difference between the top score and a result exceeds the defined threshold,
-   * that result (and any subsequent results) are considered less relevant and are excluded.
-   *
-   * @param results - The search results array.
-   * @param topScore - The score of the top result.
-   * @returns The index at which the score difference exceeds the threshold.
-   */
   private getCutoffIndex(results: SearchResult[], topScore: number): number {
     return results.findIndex((result, index) => {
-      if (index === 0) return false; // Always include the top result.
+      if (index === 0) return false;
       const scoreDiff = topScore - result.score;
       return scoreDiff > topScore * this.cutoffThreshold;
     });
