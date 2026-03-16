@@ -2,13 +2,13 @@ import MiniSearch, { SearchResult } from "minisearch";
 import { POI } from "~/types/poi";
 
 interface POIProperties {
-  id: number;
+  id?: number;
   name: string;
-  type: string;
-  floor: number;
+  type?: string;
+  floor?: number;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  metadata: Record<string, any>;
-  building_id: string;
+  metadata?: Record<string, any>;
+  building_id?: string;
 }
 
 export interface POIFeature extends GeoJSON.Feature<GeoJSON.Point> {
@@ -30,12 +30,30 @@ export class IndoorGeocoder {
     this.miniSearch = new MiniSearch({
       fields: ["name"],
       storeFields: ["name", "type", "geometry", "id"],
+      // MiniSearch defaults to idField: "id" (we keep that)
     });
 
-    const flattenPOIs = pois.map((feature: POIFeature) => ({
-      ...feature.properties,
-      geometry: feature.geometry,
-    }));
+    const flattenPOIs = pois.map((feature: POIFeature, index: number) => {
+      const props = feature.properties ?? ({} as POIProperties);
+
+      // MiniSearch requires every document to have an `id` field.
+      // Our loader sets GeoJSON Feature.id, but not necessarily properties.id.
+      const fallbackId =
+        typeof (props as any).id === "number"
+          ? (props as any).id
+          : typeof feature.id === "number"
+            ? feature.id
+            : Number.isFinite(Number(feature.id))
+              ? Number(feature.id)
+              : index;
+
+      return {
+        ...props,
+        id: fallbackId,
+        type: (props as any).type ?? "",
+        geometry: feature.geometry,
+      };
+    });
 
     this.miniSearch.addAll(flattenPOIs);
   }
@@ -71,10 +89,7 @@ export class IndoorGeocoder {
    * @param query - The query string.
    * @returns An array of suggestions with name and coordinates.
    */
-  public getAutocompleteResults(
-    query: string,
-    maxResults: number = 5,
-  ): Array<POI> {
+  public getAutocompleteResults(query: string, maxResults: number = 5): Array<POI> {
     if (!query) return [];
 
     const results = this.miniSearch.search(query, { prefix: true });
