@@ -29,9 +29,9 @@ export default function NavigationView({
   indoorGeocoder,
   indoorDirections,
 }: NavigationViewProps) {
-  const [activeInput, setActiveInput] = useState<
-    "departure" | "destination" | null
-  >(null);
+  const [activeInput, setActiveInput] = useState<"departure" | "destination" | null>(
+    null,
+  );
   const [departureLocation, setDepartureLocation] = useState("");
   const [destinationLocation, setDestinationLocation] = useState(
     selectedPOI?.name || "",
@@ -60,11 +60,9 @@ export default function NavigationView({
     const newDestination =
       activeInput === "destination" ? suggestion.name : destinationLocation;
 
-    if (activeInput === "departure") {
-      setDepartureLocation(suggestion.name);
-    } else if (activeInput === "destination") {
-      setDestinationLocation(suggestion.name);
-    }
+    if (activeInput === "departure") setDepartureLocation(suggestion.name);
+    else if (activeInput === "destination") setDestinationLocation(suggestion.name);
+
     setSuggestions([]);
     setActiveInput(null);
 
@@ -74,6 +72,11 @@ export default function NavigationView({
   function handleRouting(departureValue: string, destinationValue: string) {
     if (!departureValue || !destinationValue) return;
     if (!indoorGeocoder) return;
+
+    if (!indoorDirections) {
+      console.error("IndoorDirections is not ready yet (map not loaded).");
+      return;
+    }
 
     try {
       const departureGeo = indoorGeocoder.indoorGeocodeInput(departureValue);
@@ -86,25 +89,25 @@ export default function NavigationView({
       const departureCoord = departureGeo.coordinates as [number, number];
       const destinationCoord = destinationGeo.coordinates as [number, number];
 
-      indoorDirections?.setWaypoints([departureCoord, destinationCoord]);
+      indoorDirections.setWaypoints([departureCoord, destinationCoord]);
 
-      const routeGeometry =
-        indoorDirections?.routelinesCoordinates[0]?.[0]?.geometry;
-      if (!routeGeometry?.coordinates?.length) {
-        throw new Error("No route found");
+      const routeGeometry = indoorDirections.routelinesCoordinates?.[0]?.[0]?.geometry;
+      const coordinates = routeGeometry?.coordinates as [number, number][] | undefined;
+
+      if (!coordinates || coordinates.length < 2) {
+        console.error("No route found (graph may be empty or disconnected).", {
+          departure: departureValue,
+          destination: destinationValue,
+          departureCoord,
+          destinationCoord,
+        });
+        return;
       }
-
-      const coordinates = routeGeometry.coordinates as [number, number][];
 
       let bounds = new LngLatBounds(coordinates[0], coordinates[0]);
-      for (const coord of coordinates) {
-        bounds = bounds.extend(coord);
-      }
+      for (const coord of coordinates) bounds = bounds.extend(coord);
 
-      map?.fitBounds(bounds, {
-        padding: 200,
-        speed: 0.5,
-      });
+      map?.fitBounds(bounds, { padding: 200, speed: 0.5 });
     } catch (error) {
       console.error("Error during routing:", error);
     }
