@@ -6,9 +6,18 @@ export function useIndoorGeocoder() {
   const airportData = useAirportStore((s) => s.airportData);
 
   const poiFeatures = useMemo(() => {
-    const features = airportData?.pois?.features ?? [];
-    // Geocoder expects Point features; loader routes points into airportData.pois citecall_dGVYFmH79DyhOS4AJpwnA4Lu
-    return features as POIFeature[];
+    if (!airportData) return [];
+
+    // We want search to match what’s in the terminal datasets:
+    // - gates are polygons (airportData.indoor_map)
+    // - elevators/service points are points (airportData.pois)
+    //
+    // So we index BOTH collections.
+    const pointFeatures = (airportData.pois?.features ?? []) as POIFeature[];
+    const polygonFeatures = (airportData.indoor_map?.features ??
+      []) as unknown as POIFeature[];
+
+    return [...pointFeatures, ...polygonFeatures];
   }, [airportData]);
 
   const indoorGeocoder = useMemo(() => {
