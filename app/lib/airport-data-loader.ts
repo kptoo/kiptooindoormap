@@ -8,7 +8,7 @@
 
 import type { IndoorMapGeoJSON } from "~/types/geojson";
 
-// ─── Terminal Registry ────────────────────────────────────────────────────────
+// ─── Terminal Registry ─────────────────────────────────────────────────────────
 
 export const TERMINAL_REGISTRY = [
   { folder: "Terminal_1",        prefix: "T1",  id: "T1",       label: "Terminal 1"        },
@@ -25,7 +25,9 @@ export const TERMINAL_REGISTRY = [
 
 export type TerminalId = typeof TERMINAL_REGISTRY[number]["id"];
 
+// Add building footprints as a polygon layer we load
 export const POLYGON_LAYER_TYPES = [
+  "building",
   "gates",
   "restrooms",
   "shops",
@@ -48,9 +50,11 @@ type PolygonLayerType = typeof POLYGON_LAYER_TYPES[number];
 type LineLayerType    = typeof LINE_LAYER_TYPES[number];
 type AllLayerType     = PolygonLayerType | LineLayerType | "vertical_circulation";
 
-// ─── feature_type injection map ──────────────────────────────────────────────
+// ─── feature_type injection map ───────────────────────────────────────────────
 
+// building is not a routable/interactive unit; render as corridor-ish fill
 const FEATURE_TYPE_MAP: Record<AllLayerType, string> = {
+  building:             "building",
   gates:                "unit",
   restrooms:            "unit",
   shops:                "unit",
@@ -73,9 +77,10 @@ const CATEGORY_FIELD: Partial<Record<AllLayerType, string>> = {
 
 // Fill colours per feature_type (used as a hint for the layer renderer)
 const FILL_COLOR_MAP: Record<string, string> = {
-  unit:      "#f3e8d2",  // warm beige — gates, shops, restrooms
-  connector: "#c8e6fa",  // light blue — elevators/stairs
-  corridor:  "#d6d5d1",  // grey — floor corridors
+  building:  "#d6d5d1",
+  unit:      "#f3e8d2",
+  connector: "#c8e6fa",
+  corridor:  "#d6d5d1",
 };
 
 // ─── CRS / reprojection helpers ───────────────────────────────────────────────
@@ -87,28 +92,39 @@ function isEPSG3857(geojson: GeoJSON.FeatureCollection): boolean {
 
 function reprojectCoord(c: number[]): number[] {
   const lon = (c[0] / 20037508.34) * 180;
-  const lat = (Math.atan(Math.exp((c[1] / 20037508.34) * Math.PI)) * 360) / Math.PI - 90;
+  const lat =
+    (Math.atan(Math.exp((c[1] / 20037508.34) * Math.PI)) * 360) / Math.PI - 90;
   return [lon, lat];
 }
 
 function reprojectGeometry(g: GeoJSON.Geometry): GeoJSON.Geometry {
   switch (g.type) {
     case "Point":
-      return { ...g, coordinates: reprojectCoord(g.coordinates) };
+      return { ...g, coordinates: reprojectCoord(g.coordinates as any) };
     case "MultiPoint":
     case "LineString":
-      return { ...g, coordinates: g.coordinates.map(reprojectCoord) };
+      return { ...g, coordinates: (g.coordinates as any).map(reprojectCoord) };
     case "MultiLineString":
     case "Polygon":
-      return { ...g, coordinates: g.coordinates.map((r) => r.map(reprojectCoord)) };
+      return {
+        ...g,
+        coordinates: (g.coordinates as any).map((r: any) =>
+          r.map(reprojectCoord),
+        ),
+      };
     case "MultiPolygon":
-      return { ...g, coordinates: g.coordinates.map((p) => p.map((r) => r.map(reprojectCoord))) };
+      return {
+        ...g,
+        coordinates: (g.coordinates as any).map((p: any) =>
+          p.map((r: any) => r.map(reprojectCoord)),
+        ),
+      };
     default:
       return g;
   }
 }
 
-// ─── Feature transformer ─────────────────────────────────────────────────────
+// ─── Feature transformer ───────────────────────────────────────────────────────
 
 let globalId = 1;
 
@@ -121,35 +137,38 @@ function transformFeature(
 ): GeoJSON.Feature {
   const p = raw.properties ?? {};
   const rawLevel = (p["level"] ?? p["Level"]) as string | null | undefined;
-  const level_id = rawLevel != null && rawLevel !== "null" ? parseInt(String(rawLevel), 10) : null;
+  const level_id =
+    rawLevel != null && rawLevel !== "null" ? parseInt(String(rawLevel), 10) : null;
+
   const feature_type = FEATURE_TYPE_MAP[layerType] ?? "unit";
   const categoryField = CATEGORY_FIELD[layerType];
-  const category = categoryField ? ((p[categoryField] as string | null) ?? null) : null;
+  const category = categoryField
+    ? ((p[categoryField] as string | null) ?? null)
+    : null;
 
   return {
     type: "Feature",
     id: globalId++,
     properties: {
-      // ── Required by IndoorMapLayer ──
       feature_type,
       level_id,
-      // ── Standard display fields ──
-      name:           (p["name"] as string | null) ?? null,
-      alt_name:       null,
+
+      name: (p["name"] as string | null) ?? null,
+      alt_name: null,
       category,
-      restriction:    null,
-      accessibility:  null,
-      display_point:  null,
-      show:           true,
-      area:           0,
-      // ── Colour hints (used by fill-color coalesce) ──
-      fill:           FILL_COLOR_MAP[feature_type] ?? null,
-      // ── Dataset provenance ──
-      terminal_id:    terminalId,
+      restriction: null,
+      accessibility: null,
+      display_point: null,
+      show: true,
+      area: 0,
+
+      fill: FILL_COLOR_MAP[feature_type] ?? null,
+
+      terminal_id: terminalId,
       terminal_label: terminalLabel,
-      layer_type:     layerType,
-      feature_id:     (p["feature_id"] as string | null) ?? null,
-      gate_num:       (p["gate_num"]   as string | null) ?? null,
+      layer_type: layerType,
+      feature_id: (p["feature_id"] as string | null) ?? null,
+      gate_num: (p["gate_num"] as string | null) ?? null,
     },
     geometry: needsReproject ? reprojectGeometry(raw.geometry!) : raw.geometry!,
   };
@@ -162,7 +181,9 @@ function isPointGeometry(f: GeoJSON.Feature): boolean {
 }
 
 function isLineGeometry(f: GeoJSON.Feature): boolean {
-  return f.geometry?.type === "LineString" || f.geometry?.type === "MultiLineString";
+  return (
+    f.geometry?.type === "LineString" || f.geometry?.type === "MultiLineString"
+  );
 }
 
 function isPolygonGeometry(f: GeoJSON.Feature): boolean {
@@ -174,6 +195,8 @@ function isPolygonGeometry(f: GeoJSON.Feature): boolean {
 export interface LoadedAirportData {
   /** Polygon features for IndoorMapLayer (gates, shops, restrooms, services) */
   indoor_map: IndoorMapGeoJSON;
+  /** Building footprints per terminal (used for fitting bounds) */
+  buildings: GeoJSON.FeatureCollection;
   /** Point features for POIsLayer (elevators, stairs, escalators, service points) */
   pois: GeoJSON.FeatureCollection;
   /** Line features for RoutingLayer (corridors / Connect) */
@@ -184,7 +207,7 @@ export interface LoadedAirportData {
   floors: number[];
 }
 
-// ─── Main export ──────────────────────────────────────────────────────────────
+// ─── Main export ───────────────────────────────────────────────────────────────
 
 const DATA_BASE_URL =
   "https://raw.githubusercontent.com/kptoo/indoor-map-data/main";
@@ -192,13 +215,15 @@ const DATA_BASE_URL =
 export async function loadAirportData(
   terminalFilter?: string[],
 ): Promise<LoadedAirportData> {
-  globalId = 1; // reset IDs on each full load
+  globalId = 1;
 
   const polygonFeatures: GeoJSON.Feature[] = [];
-  const pointFeatures:   GeoJSON.Feature[] = [];
-  const lineFeatures:    GeoJSON.Feature[] = [];
+  const buildingFeatures: GeoJSON.Feature[] = [];
+  const pointFeatures: GeoJSON.Feature[] = [];
+  const lineFeatures: GeoJSON.Feature[] = [];
+
   const detectedTerminals = new Set<string>();
-  const detectedFloors    = new Set<number>();
+  const detectedFloors = new Set<number>();
 
   const allLayerTypes: AllLayerType[] = [
     ...POLYGON_LAYER_TYPES,
@@ -218,6 +243,7 @@ export async function loadAirportData(
           try {
             const res = await fetch(url);
             if (!res.ok) return;
+
             const geojson = (await res.json()) as GeoJSON.FeatureCollection;
             if (!geojson?.features?.length) return;
 
@@ -232,14 +258,16 @@ export async function loadAirportData(
                 needsReproject,
               );
 
-              // Track metadata
               const lid = transformed.properties?.level_id as number | null;
               if (lid != null && !isNaN(lid)) detectedFloors.add(lid);
               detectedTerminals.add(terminal.id);
 
-              // Route into the right bucket
               if (isPolygonGeometry(transformed)) {
-                polygonFeatures.push(transformed);
+                if (layerType === "building") {
+                  buildingFeatures.push(transformed);
+                } else {
+                  polygonFeatures.push(transformed);
+                }
               } else if (isPointGeometry(transformed)) {
                 pointFeatures.push(transformed);
               } else if (isLineGeometry(transformed)) {
@@ -247,7 +275,7 @@ export async function loadAirportData(
               }
             });
           } catch {
-            // Skip missing layers silently — not all terminals have every layer type
+            // ignore missing layers
           }
         }),
       );
@@ -259,6 +287,10 @@ export async function loadAirportData(
       type: "FeatureCollection",
       features: polygonFeatures,
     } as IndoorMapGeoJSON,
+    buildings: {
+      type: "FeatureCollection",
+      features: buildingFeatures,
+    },
     pois: {
       type: "FeatureCollection",
       features: pointFeatures,
@@ -268,6 +300,6 @@ export async function loadAirportData(
       features: lineFeatures,
     },
     terminals: [...detectedTerminals].sort(),
-    floors:    [...detectedFloors].sort((a, b) => a - b),
+    floors: [...detectedFloors].sort((a, b) => a - b),
   };
 }
