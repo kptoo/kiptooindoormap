@@ -9,13 +9,11 @@ export default class Pathfinder {
     this.graph = graph ?? new Graph();
   }
 
-  public dijkstra(
-    start: Vertex | GeoJSON.Position,
-    end: Vertex | GeoJSON.Position,
-  ): GeoJSON.Position[] {
-    start = JSON.stringify(start);
-    end = JSON.stringify(end);
-
+  /**
+   * Route between two graph vertices (string keys).
+   * Returns a list of vertex keys (each key is JSON.stringify([lng,lat])).
+   */
+  public dijkstraVertices(start: Vertex, end: Vertex): Vertex[] {
     start = this.validateVertex(start);
     end = this.validateVertex(end);
 
@@ -23,16 +21,14 @@ export default class Pathfinder {
     const previous: Record<Vertex, Vertex | null> = {};
     const queue: Vertex[] = this.graph.getVertexs();
 
-    this.graph.getVertexs().forEach((Vertex) => {
-      distances[Vertex] = Infinity;
-      previous[Vertex] = null;
+    this.graph.getVertexs().forEach((v) => {
+      distances[v] = Infinity;
+      previous[v] = null;
     });
     distances[start] = 0;
 
     while (queue.length > 0) {
-      const current = queue
-        .sort((a, b) => distances[a] - distances[b])
-        .shift()!;
+      const current = queue.sort((a, b) => distances[a] - distances[b]).shift()!;
       if (current === end) break;
 
       this.graph.getEdges(current).forEach(({ to, weight }) => {
@@ -51,9 +47,24 @@ export default class Pathfinder {
       current = previous[current];
     }
 
-    const pathCoords = path.map((coord) => JSON.parse(coord));
+    return path;
+  }
 
-    return pathCoords;
+  /**
+   * Backwards compatible API: accepts Vertex or GeoJSON.Position, returns coordinates.
+   *
+   * IMPORTANT: if you pass a GeoJSON.Position that is not an existing vertex,
+   * this will still throw. IndoorDirections should prefer dijkstraVertices().
+   */
+  public dijkstra(
+    start: Vertex | GeoJSON.Position,
+    end: Vertex | GeoJSON.Position,
+  ): GeoJSON.Position[] {
+    const startKey = JSON.stringify(start);
+    const endKey = JSON.stringify(end);
+
+    const pathVertices = this.dijkstraVertices(startKey, endKey);
+    return pathVertices.map((coord) => JSON.parse(coord));
   }
 
   private validateVertex(position: Vertex): Vertex {
