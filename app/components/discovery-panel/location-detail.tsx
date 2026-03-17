@@ -9,23 +9,25 @@ import {
 } from "../ui/dropdown-menu";
 
 interface LocationDetailProps {
-  selectedPOI: POI;
-  handleBackClick: () => void;
-  handleDirectionsClick: () => void;
+  poi: POI;
+  onBack: () => void;
+  onDirections: () => void;
 }
+
 export default function LocationDetail({
-  selectedPOI,
-  handleBackClick,
-  handleDirectionsClick,
+  poi,
+  onBack,
+  onDirections,
 }: LocationDetailProps) {
   return (
     <div className="space-y-4">
       <div className="mb-4 flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-semibold">{selectedPOI.name}</h2>
-          {/*TODO: add floor to poi properties and use it here */}
+          <h2 className="text-xl font-semibold">{poi.name}</h2>
+          {/* TODO: add floor to poi properties and use it here */}
           <p className="text-xs text-gray-600 dark:text-gray-400">1st Floor</p>
         </div>
+
         <div className="flex space-x-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
@@ -37,8 +39,9 @@ export default function LocationDetail({
                 <Share2 size={16} />
               </Button>
             </DropdownMenuTrigger>
+
             <DropdownMenuContent>
-              {/*TODO: add logic*/}
+              {/* TODO: add logic */}
               <DropdownMenuItem onClick={() => console.log("TODO: QR Code")}>
                 <QrCode className="mr-2 size-4" />
                 <span>QR Code</span>
@@ -49,9 +52,10 @@ export default function LocationDetail({
               </DropdownMenuItem>
             </DropdownMenuContent>
           </DropdownMenu>
+
           <Button
             variant="ghost"
-            onClick={handleBackClick}
+            onClick={onBack}
             size="icon"
             className="rounded-full p-2 hover:bg-gray-200 dark:hover:bg-gray-700"
           >
@@ -59,9 +63,10 @@ export default function LocationDetail({
           </Button>
         </div>
       </div>
+
       <Button
         className="w-full rounded-full"
-        onClick={handleDirectionsClick}
+        onClick={onDirections}
         variant="primary"
       >
         <Navigation2 className="mr-2" size={18} />
