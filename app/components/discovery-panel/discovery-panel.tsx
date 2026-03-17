@@ -74,6 +74,10 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
           id: firstPOI.properties?.id as number,
           name: firstPOI.properties?.name as string,
           coordinates: firstPOI.geometry.coordinates,
+          level_id: (firstPOI.properties as any)?.level_id ?? null,
+          terminal_id: (firstPOI.properties as any)?.terminal_id ?? null,
+          layer_type: (firstPOI.properties as any)?.layer_type ?? null,
+          category: (firstPOI.properties as any)?.category ?? null,
         };
 
         setSelectedPOI(poi);
@@ -91,7 +95,7 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
     return () => {
       map?.off("click", "indoor-map-extrusion", handleMapClick);
     };
-  }, [map, mode, navigateToPOI]);
+  }, [map, mode, navigateToPOI, indoorDirections]);
 
   return (
     <Card className="absolute z-10 w-full rounded-xl shadow-lg md:absolute md:left-4 md:top-4 md:max-w-[23.5rem]">
@@ -130,11 +134,12 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
           />
         )}
 
-        {mode === "navigation" && selectedPOI && (
+        {mode === "navigation" && (
           <NavigationView
+            handleBackClick={handleBackClick}
+            selectedPOI={selectedPOI}
+            indoorGeocoder={indoorGeocoder}
             indoorDirections={indoorDirections}
-            destinationPOI={selectedPOI}
-            onBack={handleBackClick}
           />
         )}
       </CardContent>
