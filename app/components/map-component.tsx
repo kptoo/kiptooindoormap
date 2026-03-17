@@ -13,6 +13,7 @@ import { IndoorMapGeoJSON } from "~/types/geojson";
 import useAirportStore from "~/stores/airport-store";
 import useFloorStore from "~/stores/floor-store";
 import useMapStore from "~/stores/use-map-store";
+import useDirections from "~/hooks/use-directions";
 import OIMLogo from "../controls/oim-logo";
 import ContactBanner from "./contact-banner";
 import DiscoveryPanel from "./discovery-panel/discovery-panel";
@@ -24,10 +25,19 @@ export default function MapComponent() {
   const mapContainer = useRef<HTMLDivElement>(null);
   const [theme] = useTheme();
 
+  const map = useMapStore((state) => state.mapInstance);
   const setMapInstance = useMapStore((state) => state.setMapInstance);
-  const { setIsLoading, setAirportData, setAvailableTerminals } =
-    useAirportStore();
+
+  const {
+    setIsLoading,
+    setAirportData,
+    setAvailableTerminals,
+    airportData,
+  } = useAirportStore();
+
   const { setCurrentFloor } = useFloorStore();
+
+  const { indoorDirections } = useDirections(map);
 
   // IndoorMapLayer is stateful — keep a stable ref
   const [indoorMapLayer] = useState(
@@ -37,6 +47,7 @@ export default function MapComponent() {
         theme as string,
       ),
   );
+
   const [routingLayer] = useState(
     () =>
       new RoutingLayer(
@@ -52,10 +63,13 @@ export default function MapComponent() {
       .then((data) => {
         setAirportData(data);
         setAvailableTerminals(data.terminals);
+
         const defaultFloor = data.floors[0] ?? 1;
         setCurrentFloor(defaultFloor);
+
         indoorMapLayer.updateData(data.indoor_map);
         routingLayer.updateData(data.routing);
+
         indoorMapLayer.setFloorLevel(defaultFloor);
       })
       .catch((err) => console.error("Failed to load airport data:", err))
@@ -79,10 +93,7 @@ export default function MapComponent() {
         map.addLayer(indoorMapLayer);
         map.addLayer(routingLayer);
         map.addLayer(
-          new POIsLayer(
-            { type: "FeatureCollection", features: [] },
-            theme as string,
-          ),
+          new POIsLayer({ type: "FeatureCollection", features: [] }, theme as string),
         );
       } catch (error) {
         console.error("Failed to initialise map layers:", error);
@@ -110,12 +121,22 @@ export default function MapComponent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [theme]); // re-init map when theme changes
 
+  // ── Build indoor routing graph from corridors + connectors ─────────────────
+  useEffect(() => {
+    if (!indoorDirections) return;
+    if (!airportData?.routing) return;
+
+    try {
+      indoorDirections.loadMapData(airportData.routing);
+    } catch (e) {
+      console.error("Failed to load indoor routing graph:", e);
+    }
+  }, [indoorDirections, airportData?.routing]);
+
   return (
     <div className="flex size-full flex-col">
-      {/* DiscoveryPanel now owns the terminal selector internally */}
       <DiscoveryPanel indoorMapLayer={indoorMapLayer} />
 
-      {/* Floor controls */}
       <FloorSelector indoorMapLayer={indoorMapLayer} />
       <FloorUpDownControl indoorMapLayer={indoorMapLayer} />
 
