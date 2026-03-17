@@ -9,10 +9,14 @@
  *
  * Use this type instead of GeoJSON.Feature when working with search and UI components.
  */
-
 export interface POI {
   id: number;
   name: string;
   coordinates: GeoJSON.Position;
-  // future properties will be added here
+
+  // derived from GeoJSON feature properties
+  level_id?: number | null;
+  terminal_id?: string | null;
+  layer_type?: string | null;
+  category?: string | null;
 }
