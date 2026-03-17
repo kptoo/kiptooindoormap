@@ -97,8 +97,6 @@ export default function DiscoveryView({
       const category = normalize(p.category);
       const name = normalize(p.name);
 
-      // Filter rules primarily by loader-injected layer_type + category.
-      // Loader injects: layer_type, category, terminal_id, level_id. citecall_dGVYFmH79DyhOS4AJpwnA4Lu
       switch (activeTopFilter) {
         case "gates":
           return layerType === "gates" || name.includes("gate");
@@ -109,11 +107,26 @@ export default function DiscoveryView({
         case "atm":
           return category === "atm" || name.includes("atm");
         case "restrooms":
-          return layerType === "restrooms" || category.includes("women") || category.includes("men") || category.includes("family");
+          return (
+            layerType === "restrooms" ||
+            category.includes("women") ||
+            category.includes("men") ||
+            category.includes("family")
+          );
         case "food":
-          return layerType === "food_beverage" || category.includes("restaurant") || category.includes("pub") || name.includes("cafe");
+          return (
+            layerType === "food_beverage" ||
+            category.includes("restaurant") ||
+            category.includes("pub") ||
+            name.includes("cafe")
+          );
         case "shops":
-          return layerType === "shops" || category.includes("gifts") || category.includes("cosmetics") || category.includes("clothing");
+          return (
+            layerType === "shops" ||
+            category.includes("gifts") ||
+            category.includes("cosmetics") ||
+            category.includes("clothing")
+          );
         case "vertical":
           return (
             layerType === "vertical_circulation" ||
@@ -129,12 +142,12 @@ export default function DiscoveryView({
       }
     });
 
-    // Convert to POI list (SuggestionsList expects POI[])
     return matches
       .map((f) => ({
         id: (f.properties as any)?.id ?? (f.id as number),
         name: (f.properties as any)?.name as string,
-        coordinates: f.geometry.coordinates,
+        // NOTE: some features are polygons; selecting them via top filters may still need centroid logic.
+        coordinates: (f.geometry as any).coordinates,
       }))
       .filter((p) => p.id != null && p.name)
       .slice(0, 50);
@@ -147,22 +160,29 @@ export default function DiscoveryView({
   };
 
   useEffect(() => {
-    // If a top filter is active, show filtered results (not autocomplete)
     if (activeTopFilter) {
       setSuggestions(filteredTopSuggestions);
       return;
     }
 
-    // Normal autocomplete while typing
     const newSuggestions = indoorGeocoder.getAutocompleteResults(searchQuery);
     setSuggestions(newSuggestions);
   }, [searchQuery, indoorGeocoder, activeTopFilter, filteredTopSuggestions]);
 
   function handleSuggestionClick(suggestion: POI) {
+    if (!suggestion) return; // hard guard
     setSearchQuery(suggestion.name);
     setIsSearching(false);
     setActiveTopFilter(null);
     onSelectPOI(suggestion);
+  }
+
+  function handleSubmit() {
+    // On Enter: select the first suggestion if it exists; otherwise do nothing.
+    if (!suggestions || suggestions.length === 0) return;
+    const first = suggestions[0];
+    if (!first) return;
+    handleSuggestionClick(first);
   }
 
   function handleTopLocationsClick(topLocationName: string) {
@@ -190,10 +210,11 @@ export default function DiscoveryView({
             onChange={(e) => {
               setSearchQuery(e.target.value);
               setIsSearching(true);
-              setActiveTopFilter(null); // typing cancels top-filter mode
+              setActiveTopFilter(null);
             }}
             onFocus={() => setIsSearching(true)}
             onBack={handleBackClick}
+            onSubmit={handleSubmit}
           />
         </div>
 
