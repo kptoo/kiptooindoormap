@@ -82,14 +82,12 @@ export default function DiscoveryView({
     const matches = poiFeatures.filter((f) => {
       const p = (f.properties ?? {}) as AirportPOIProperties;
 
-      // Respect currently selected terminal/floor
       if (activeTerminal !== "ALL") {
         if (asString(p.terminal_id) !== activeTerminal) return false;
       }
       if (p.level_id != null && !Number.isNaN(p.level_id)) {
         if (p.level_id !== currentFloor) return false;
       } else {
-        // If feature has no level_id, exclude in floor-specific filtering mode
         return false;
       }
 
@@ -143,12 +141,19 @@ export default function DiscoveryView({
     });
 
     return matches
-      .map((f) => ({
-        id: (f.properties as any)?.id ?? (f.id as number),
-        name: (f.properties as any)?.name as string,
-        // NOTE: some features are polygons; selecting them via top filters may still need centroid logic.
-        coordinates: (f.geometry as any).coordinates,
-      }))
+      .map((f) => {
+        const props = (f.properties ?? {}) as AirportPOIProperties;
+
+        return {
+          id: (f.properties as any)?.id ?? (f.id as number),
+          name: (f.properties as any)?.name as string,
+          coordinates: (f.geometry as any).coordinates,
+          level_id: props.level_id ?? null,
+          terminal_id: props.terminal_id ?? null,
+          layer_type: props.layer_type ?? null,
+          category: props.category ?? null,
+        } as POI;
+      })
       .filter((p) => p.id != null && p.name)
       .slice(0, 50);
   }, [activeTopFilter, poiFeatures, activeTerminal, currentFloor]);
@@ -170,7 +175,7 @@ export default function DiscoveryView({
   }, [searchQuery, indoorGeocoder, activeTopFilter, filteredTopSuggestions]);
 
   function handleSuggestionClick(suggestion: POI) {
-    if (!suggestion) return; // hard guard
+    if (!suggestion) return;
     setSearchQuery(suggestion.name);
     setIsSearching(false);
     setActiveTopFilter(null);
@@ -178,7 +183,6 @@ export default function DiscoveryView({
   }
 
   function handleSubmit() {
-    // On Enter: select the first suggestion if it exists; otherwise do nothing.
     if (!suggestions || suggestions.length === 0) return;
     const first = suggestions[0];
     if (!first) return;
