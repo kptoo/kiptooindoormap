@@ -8,6 +8,7 @@ interface SearchBarProps {
   onChange: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onFocus: () => void;
   onBack: () => void;
+  onSubmit: () => void;
 }
 
 export default function SearchBar({
@@ -16,6 +17,7 @@ export default function SearchBar({
   onChange,
   onFocus,
   onBack,
+  onSubmit,
 }: SearchBarProps) {
   return (
     <div className="relative grow">
@@ -34,12 +36,19 @@ export default function SearchBar({
           size={18}
         />
       )}
+
       <Input
         type="text"
         placeholder="Search indoor locations..."
         value={searchQuery}
         onChange={onChange}
         onFocus={onFocus}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            onSubmit();
+          }
+        }}
         className="h-10 w-full min-w-72 rounded-full px-10 py-4 text-lg shadow-sm"
       />
     </div>
