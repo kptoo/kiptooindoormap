@@ -30,7 +30,7 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
   const { indoorDirections } = useDirections(map);
   const { indoorGeocoder, poiFeatures } = useIndoorGeocoder();
 
-  // IMPORTANT: Initialize the indoor routing graph from corridors/connectors
+  // Initialize routing graph for this indoorDirections instance
   useEffect(() => {
     if (!indoorDirections) return;
     if (!airportData?.routing) return;
