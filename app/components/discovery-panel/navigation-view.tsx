@@ -44,6 +44,8 @@ export default function NavigationView({
     activeInput === "departure" ? departureLocation : destinationLocation;
 
   useEffect(() => {
+    if (!indoorGeocoder) return;
+
     if (activeInput && activeQuery) {
       const newSuggestions = indoorGeocoder.getAutocompleteResults(activeQuery);
       setSuggestions(newSuggestions);
@@ -71,10 +73,11 @@ export default function NavigationView({
 
   function handleRouting(departureValue: string, destinationValue: string) {
     if (!departureValue || !destinationValue) return;
+    if (!indoorGeocoder) return;
+
     try {
       const departureGeo = indoorGeocoder.indoorGeocodeInput(departureValue);
-      const destinationGeo =
-        indoorGeocoder.indoorGeocodeInput(destinationValue);
+      const destinationGeo = indoorGeocoder.indoorGeocodeInput(destinationValue);
 
       if (!departureGeo?.coordinates || !destinationGeo?.coordinates) {
         throw new Error("Invalid geocoding results");
@@ -104,7 +107,6 @@ export default function NavigationView({
       });
     } catch (error) {
       console.error("Error during routing:", error);
-      // TODO: Show error message to user
     }
   }
 
@@ -129,6 +131,7 @@ export default function NavigationView({
           <Accessibility size={18} />
         </Toggle>
       </div>
+
       <div className="flex space-x-2">
         <div className="w-full space-y-4">
           <div className="flex items-center space-x-4">
@@ -151,6 +154,7 @@ export default function NavigationView({
               onBlur={() => setActiveInput(null)}
             />
           </div>
+
           <div className="mb-2 flex items-center space-x-4">
             <div className="w-4">
               <MapPin size={16} className="text-red-600 dark:text-red-300" />
@@ -165,6 +169,7 @@ export default function NavigationView({
             />
           </div>
         </div>
+
         <div className="flex items-center justify-center">
           <Button variant="ghost" size="icon" onClick={handleSwapLocations}>
             <ArrowUpDown size={18} />
