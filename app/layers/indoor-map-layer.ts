@@ -21,8 +21,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
     // Rendering is handled by maplibre's internal renderer for GeoJSON sources
   };
 
-  // ── Data updates ────────────────────────────────────────────────────────────
-
   updateData(newData: IndoorMapGeoJSON) {
     this.indoorMapData = newData;
     if (!this.map) return;
@@ -30,39 +28,51 @@ export default class IndoorMapLayer implements CustomLayerInterface {
     if (source) source.setData(this.indoorMapData);
   }
 
-  // ── Floor filtering ─────────────────────────────────────────────────────────
-
   setFloorLevel(level: number) {
     if (!this.map || !this.indoorMapData) return;
+
+    // When ALL terminals is active, show ALL levels too (no floor filtering).
+    if (this.activeTerminal === "ALL") {
+      const source = this.map.getSource("indoor-map") as maplibregl.GeoJSONSource;
+      source.setData(this.indoorMapData);
+      return;
+    }
+
     const source = this.map.getSource("indoor-map") as maplibregl.GeoJSONSource;
     const features = this.indoorMapData.features.filter(
       (f: IndoorFeature) =>
         (f.properties.level_id === level || f.properties.level_id === null) &&
-        (this.activeTerminal === "ALL" ||
-          f.properties.terminal_id === this.activeTerminal),
+        f.properties.terminal_id === this.activeTerminal,
     );
     source.setData({ type: "FeatureCollection", features });
   }
 
-  // ── Terminal filtering ──────────────────────────────────────────────────────
-
   setTerminal(terminalId: string, currentFloor?: number) {
     this.activeTerminal = terminalId;
     if (!this.map || !this.indoorMapData) return;
+
     const source = this.map.getSource("indoor-map") as maplibregl.GeoJSONSource;
+
+    // ALL terminals => show everything, ignore currentFloor
+    if (terminalId === "ALL") {
+      source.setData(this.indoorMapData);
+      return;
+    }
+
     const features = this.indoorMapData.features.filter((f: IndoorFeature) => {
-      const terminalMatch =
-        terminalId === "ALL" || f.properties.terminal_id === terminalId;
+      const terminalMatch = f.properties.terminal_id === terminalId;
+
+      // If a specific floor is provided, filter; otherwise show all floors for this terminal
       const floorMatch =
         currentFloor === undefined ||
         f.properties.level_id === currentFloor ||
         f.properties.level_id === null;
+
       return terminalMatch && floorMatch;
     });
+
     source.setData({ type: "FeatureCollection", features });
   }
-
-  // ── Floor discovery ─────────────────────────────────────────────────────────
 
   async getAvailableFloors(terminalId?: string): Promise<number[]> {
     const floors = new Set<number>();
@@ -82,8 +92,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
     if (!result.includes(1)) result.unshift(1);
     return result;
   }
-
-  // ── Map setup ───────────────────────────────────────────────────────────────
 
   async onAdd(map: Map): Promise<void> {
     this.map = map;
@@ -106,19 +114,15 @@ export default class IndoorMapLayer implements CustomLayerInterface {
 
     const colors = this.theme === "dark" ? darkColor : lightColor;
 
-    // ── Tile3dLayer-equivalent height constants for indoor features ──
-    // Mirrors tile-3d-layer.ts: height animates from 0 at zoom 15 → full at zoom 16,
-    // using the same interpolate/linear/zoom expression pattern.
-    const UNIT_HEIGHT = 4;       // gates, shops, restrooms — equivalent to a low building storey
-    const CONNECTOR_HEIGHT = 2;  // stairs, elevators — shorter than rooms
+    const UNIT_HEIGHT = 4;
+    const CONNECTOR_HEIGHT = 2;
 
     map.addSource("indoor-map", {
       type: "geojson",
       data: this.indoorMapData,
-      generateId: false, // IDs are pre-assigned by the loader
+      generateId: false,
     });
 
-    // ── Floor fill (all polygons) ────────────────────────────────────────────
     map.addLayer({
       id: "indoor-map-fill",
       type: "fill",
@@ -130,7 +134,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       filter: ["==", ["geometry-type"], "Polygon"],
     });
 
-    // ── Outline (all polygons) ───────────────────────────────────────────────
     map.addLayer({
       id: "indoor-map-fill-outline",
       type: "line",
@@ -143,12 +146,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       filter: ["==", ["geometry-type"], "Polygon"],
     });
 
-    // ── 3-D extrusion for "unit" features (gates, shops, restrooms) ──────────
-    // Uses the exact same zoom-interpolated height + color-by-height technique
-    // as tile-3d-layer.ts ("3d-buildings"):
-    //   • fill-extrusion-color  → interpolated by render height (0→lightgray, mid→royalblue, tall→lightblue)
-    //   • fill-extrusion-height → interpolated by zoom (0 at z15 → full height at z16), animates in on zoom
-    //   • fill-extrusion-base   → 0 below z16, render_min_height at z16+ (indoor: always 0)
     map.addLayer({
       id: "indoor-map-extrusion",
       type: "fill-extrusion",
@@ -159,7 +156,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
         ["==", ["get", "feature_type"], "unit"],
       ],
       paint: {
-        // Color interpolated by height — mirrors tile-3d-layer colour ramp
         "fill-extrusion-color": [
           "case",
           ["boolean", ["feature-state", "hover"], false],
@@ -167,7 +163,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
           [
             "interpolate",
             ["linear"],
-            // Use the GeoJSON `height` property if present, else fall back to UNIT_HEIGHT
             ["coalesce", ["get", "height"], UNIT_HEIGHT],
             0,
             "lightgray",
@@ -179,8 +174,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
             "lightblue",
           ],
         ],
-        // Height animates from 0 at zoom 15 → full height at zoom 16
-        // Mirrors: fill-extrusion-height in tile-3d-layer.ts
         "fill-extrusion-height": [
           "interpolate",
           ["linear"],
@@ -190,8 +183,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
           16,
           ["coalesce", ["get", "height"], UNIT_HEIGHT],
         ],
-        // Base always 0 for indoor (single-storey extrusion from ground)
-        // Mirrors: fill-extrusion-base in tile-3d-layer.ts (0 below z16)
         "fill-extrusion-base": [
           "interpolate",
           ["linear"],
@@ -205,8 +196,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       },
     });
 
-    // ── Low-height extrusion for connector features (elevators, stairs) ──────
-    // Same zoom-animated pattern, at half the unit height
     map.addLayer({
       id: "indoor-map-connector-extrusion",
       type: "fill-extrusion",
@@ -218,7 +207,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       ],
       paint: {
         "fill-extrusion-color": colors.connector,
-        // Zoom-animated height — same pattern as tile-3d-layer.ts
         "fill-extrusion-height": [
           "interpolate",
           ["linear"],
@@ -241,17 +229,12 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       },
     });
 
-    // ── Room name labels ──────────────��──────────────────────────────────────
     map.addLayer({
       id: "indoor-map-labels",
       type: "symbol",
       source: "indoor-map",
       minzoom: 17,
-      filter: [
-        "all",
-        ["==", ["geometry-type"], "Polygon"],
-        ["!=", ["get", "name"], null],
-      ],
+      filter: ["all", ["==", ["geometry-type"], "Polygon"], ["!=", ["get", "name"], null]],
       layout: {
         "text-field": ["get", "name"],
         "text-font": ["Noto Sans Regular"],
@@ -267,7 +250,6 @@ export default class IndoorMapLayer implements CustomLayerInterface {
       },
     });
 
-    // ── Hover interaction ────────────────────────────────────────────────────
     map.on("mousemove", "indoor-map-extrusion", (e) => {
       map.getCanvas().style.cursor = "pointer";
       if (e.features && e.features.length > 0) {
