@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import useDirections from "~/hooks/use-directions";
 import { useIndoorGeocoder } from "~/hooks/use-indoor-geocder";
 import IndoorMapLayer from "~/layers/indoor-map-layer";
+import useAirportStore from "~/stores/airport-store";
 import useMapStore from "~/stores/use-map-store";
 import { POI } from "~/types/poi";
 import poiMap from "~/utils/poi-map";
@@ -21,10 +22,36 @@ interface DiscoveryPanelProps {
 
 export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) {
   const map = useMapStore((state) => state.mapInstance);
+  const airportData = useAirportStore((s) => s.airportData);
+
   const [mode, setMode] = useState<UIMode>("discovery");
   const [selectedPOI, setSelectedPOI] = useState<POI | null>(null);
+
   const { indoorDirections } = useDirections(map);
   const { indoorGeocoder, poiFeatures } = useIndoorGeocoder();
+
+  // IMPORTANT: Initialize the indoor routing graph from corridors/connectors
+  useEffect(() => {
+    if (!indoorDirections) return;
+    if (!airportData?.routing) return;
+
+    const connectors: GeoJSON.FeatureCollection = {
+      type: "FeatureCollection",
+      features: (airportData.pois?.features ?? []).filter((f) => {
+        const p = (f.properties ?? {}) as any;
+        return (
+          f.geometry?.type === "Point" &&
+          String(p.layer_type ?? "").toLowerCase() === "vertical_circulation"
+        );
+      }),
+    };
+
+    try {
+      indoorDirections.loadMapData(airportData.routing, connectors);
+    } catch (e) {
+      console.error("Failed to init indoor routing graph:", e);
+    }
+  }, [indoorDirections, airportData?.routing, airportData?.pois]);
 
   const navigateToPOI = useCallback(
     (coordinates: GeoJSON.Position) => {
