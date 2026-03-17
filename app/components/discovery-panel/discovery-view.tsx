@@ -1,9 +1,11 @@
 import { SlidersVertical } from "lucide-react";
 import React, { useEffect, useMemo, useState } from "react";
+import { LngLatBounds } from "maplibre-gl";
 import { TERMINAL_REGISTRY } from "~/lib/airport-data-loader";
 import IndoorMapLayer from "~/layers/indoor-map-layer";
 import useAirportStore from "~/stores/airport-store";
 import useFloorStore from "~/stores/floor-store";
+import useMapStore from "~/stores/use-map-store";
 import { POI } from "~/types/poi";
 import { IndoorGeocoder, POIFeature } from "~/utils/indoor-geocoder";
 import { Toggle } from "../ui/toggle";
@@ -58,6 +60,35 @@ interface DiscoveryViewProps {
   indoorMapLayer: IndoorMapLayer;
 }
 
+function geometryToBounds(geometry: GeoJSON.Geometry): LngLatBounds | null {
+  const bbox = {
+    minX: Number.POSITIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY,
+  };
+
+  const walk = (coords: any) => {
+    if (!coords) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      const x = coords[0];
+      const y = coords[1];
+      if (x < bbox.minX) bbox.minX = x;
+      if (y < bbox.minY) bbox.minY = y;
+      if (x > bbox.maxX) bbox.maxX = x;
+      if (y > bbox.maxY) bbox.maxY = y;
+      return;
+    }
+    for (const c of coords) walk(c);
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  walk((geometry as any).coordinates);
+
+  if (!Number.isFinite(bbox.minX) || !Number.isFinite(bbox.minY)) return null;
+  return new LngLatBounds([bbox.minX, bbox.minY], [bbox.maxX, bbox.maxY]);
+}
+
 export default function DiscoveryView({
   indoorGeocoder,
   poiFeatures,
@@ -72,8 +103,15 @@ export default function DiscoveryView({
     null,
   );
 
-  const { activeTerminal, setActiveTerminal, availableTerminals } =
-    useAirportStore();
+  const map = useMapStore((s) => s.mapInstance);
+
+  const {
+    activeTerminal,
+    setActiveTerminal,
+    availableTerminals,
+    airportData,
+  } = useAirportStore();
+
   const { currentFloor } = useFloorStore();
 
   const filteredTopSuggestions = useMemo(() => {
@@ -198,10 +236,48 @@ export default function DiscoveryView({
     setIsSearching(true);
   }
 
+  function fitToBuildings(terminalId: string) {
+    const buildings = airportData?.buildings?.features ?? [];
+    if (!map || buildings.length === 0) return;
+
+    const filtered =
+      terminalId === "ALL"
+        ? buildings
+        : buildings.filter(
+            (f) => (f.properties as any)?.terminal_id === terminalId,
+          );
+
+    let bounds: LngLatBounds | null = null;
+
+    for (const f of filtered) {
+      if (!f.geometry) continue;
+      const b = geometryToBounds(f.geometry as GeoJSON.Geometry);
+      if (!b) continue;
+      bounds = bounds ? bounds.extend(b.getSouthWest()).extend(b.getNorthEast()) : b;
+    }
+
+    if (!bounds) return;
+
+    map.fitBounds(bounds, {
+      padding: 120,
+      duration: 900,
+    });
+  }
+
   function handleTerminalChange(e: React.ChangeEvent<HTMLSelectElement>) {
     const id = e.target.value;
     setActiveTerminal(id);
-    indoorMapLayer.setTerminal(id, currentFloor);
+
+    // Show ALL terminals + ALL levels by default
+    if (id === "ALL") {
+      indoorMapLayer.setTerminal("ALL"); // no floor filter
+      fitToBuildings("ALL");
+      return;
+    }
+
+    // Specific terminal: show that terminal, all its levels, and fit to its building footprint
+    indoorMapLayer.setTerminal(id); // no floor filter => all levels visible
+    fitToBuildings(id);
   }
 
   return (
