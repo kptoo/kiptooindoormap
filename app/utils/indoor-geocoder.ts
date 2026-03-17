@@ -3,16 +3,16 @@ import { POI } from "~/types/poi";
 
 interface POIProperties {
   id?: number;
+
+  // loader-injected (and/or present in source data)
   name?: string | null;
-
-  // injected by loader:
   category?: string | null;
-  level_id?: number | null;
-  terminal_id?: string | null;
-  layer_type?: string | null;
   gate_num?: string | null;
+  layer_type?: string | null;
+  terminal_id?: string | null;
+  level_id?: number | null;
 
-  // optional legacy/other:
+  // other optional fields that may exist
   type?: string | null;
   floor?: number | null;
 
@@ -25,48 +25,38 @@ export interface POIFeature extends GeoJSON.Feature<GeoJSON.Point> {
   properties: POIProperties;
 }
 
-function normalizeToken(v: unknown): string {
-  return String(v ?? "").trim();
+function asNonEmptyString(v: unknown): string | null {
+  const s = String(v ?? "").trim();
+  return s ? s : null;
 }
 
-function buildDisplayName(props: POIProperties): string {
-  const explicit = normalizeToken(props.name);
+/**
+ * Build a stable, searchable name for terminal data.
+ * Search MUST query `name`, so we derive `name` when the dataset doesn't provide it.
+ */
+function deriveName(props: POIProperties): string {
+  // 1) Prefer explicit name if provided
+  const explicit = asNonEmptyString(props.name);
   if (explicit) return explicit;
 
-  // Gates commonly have gate_num but no explicit name in some datasets
-  const gateNum = normalizeToken(props.gate_num);
-  if (gateNum) return `Gate ${gateNum}`;
+  // 2) Gate fallback (common in terminal datasets)
+  const gate = asNonEmptyString(props.gate_num);
+  if (gate) return `Gate ${gate}`;
 
-  // Otherwise fall back to something useful (category/layer_type)
-  const category = normalizeToken(props.category);
+  // 3) Category fallback (shops/food/restrooms/services often encode type in category)
+  const category = asNonEmptyString(props.category);
   if (category) return category;
 
-  const layerType = normalizeToken(props.layer_type);
+  // 4) Layer fallback as last resort
+  const layerType = asNonEmptyString(props.layer_type);
   if (layerType) return layerType;
 
   return "Unknown";
 }
 
-function buildSearchText(props: POIProperties, displayName: string): string {
-  // Include everything a user might type
-  const parts = [
-    displayName,
-    props.name,
-    props.category,
-    props.layer_type,
-    props.terminal_id,
-    props.gate_num,
-    props.level_id,
-    props.floor,
-    props.type,
-  ].map(normalizeToken);
-
-  // De-dupe + join
-  return Array.from(new Set(parts.filter(Boolean))).join(" ");
-}
-
 /**
  * IndoorGeocoder encapsulates search functionality using MiniSearch.
+ * We index ONLY the `name` field.
  */
 export class IndoorGeocoder {
   private miniSearch: MiniSearch;
@@ -76,20 +66,17 @@ export class IndoorGeocoder {
     this.cutoffThreshold = cutoffThreshold;
 
     this.miniSearch = new MiniSearch({
-      // Search across both the visible name AND a combined text field
-      fields: ["name", "searchText"],
+      // Search only `name` (per requirement)
+      fields: ["name"],
       storeFields: ["name", "geometry", "id"],
       // MiniSearch defaults to idField: "id"
-      searchOptions: {
-        prefix: true, // makes typing feel like autocomplete
-        fuzzy: 0.2, // tolerate minor typos
-      },
     });
 
     const flattenPOIs = pois.map((feature: POIFeature, index: number) => {
       const props = feature.properties ?? ({} as POIProperties);
 
-      // Ensure we always have an id for MiniSearch
+      // MiniSearch requires every document to have an `id` field.
+      // Loader sets GeoJSON Feature.id, but properties.id may be missing.
       const fallbackId =
         typeof (props as any).id === "number"
           ? (props as any).id
@@ -99,14 +86,12 @@ export class IndoorGeocoder {
               ? Number(feature.id)
               : index;
 
-      const displayName = buildDisplayName(props);
-      const searchText = buildSearchText(props, displayName);
+      const name = deriveName(props);
 
       return {
         ...props,
         id: fallbackId,
-        name: displayName,
-        searchText,
+        name,
         geometry: feature.geometry,
       };
     });
@@ -130,7 +115,8 @@ export class IndoorGeocoder {
   public getAutocompleteResults(query: string, maxResults: number = 5): Array<POI> {
     if (!query) return [];
 
-    const results = this.miniSearch.search(query);
+    // prefix:true makes results appear as you type
+    const results = this.miniSearch.search(query, { prefix: true });
     if (results.length === 0) return [];
 
     const topScore = results[0].score;
@@ -150,7 +136,7 @@ export class IndoorGeocoder {
 
   private getCutoffIndex(results: SearchResult[], topScore: number): number {
     return results.findIndex((result, index) => {
-      if (index === 0) return false;
+      if (index === 0) return false; // Always include the top result
       const scoreDiff = topScore - result.score;
       return scoreDiff > topScore * this.cutoffThreshold;
     });
