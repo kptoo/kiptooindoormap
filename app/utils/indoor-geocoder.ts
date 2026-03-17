@@ -4,7 +4,6 @@ import { POI } from "~/types/poi";
 interface POIProperties {
   id?: number;
 
-  // loader-injected (and/or present in source data)
   name?: string | null;
   category?: string | null;
   gate_num?: string | null;
@@ -12,7 +11,6 @@ interface POIProperties {
   terminal_id?: string | null;
   level_id?: number | null;
 
-  // other optional fields that may exist
   type?: string | null;
   floor?: number | null;
 
@@ -21,7 +19,7 @@ interface POIProperties {
   building_id?: string;
 }
 
-export interface POIFeature extends GeoJSON.Feature<GeoJSON.Point> {
+export interface POIFeature extends GeoJSON.Feature {
   properties: POIProperties;
 }
 
@@ -30,10 +28,6 @@ function asNonEmptyString(v: unknown): string | null {
   return s ? s : null;
 }
 
-/**
- * Build a stable, searchable name for terminal data.
- * Search MUST query `name`, so we derive `name` when the dataset doesn't provide it.
- */
 function deriveName(props: POIProperties): string {
   const explicit = asNonEmptyString(props.name);
   if (explicit) return explicit;
@@ -50,6 +44,49 @@ function deriveName(props: POIProperties): string {
   return "Unknown";
 }
 
+function extendBbox(
+  bbox: { minX: number; minY: number; maxX: number; maxY: number },
+  coord: GeoJSON.Position,
+) {
+  const x = coord[0];
+  const y = coord[1];
+  if (x < bbox.minX) bbox.minX = x;
+  if (y < bbox.minY) bbox.minY = y;
+  if (x > bbox.maxX) bbox.maxX = x;
+  if (y > bbox.maxY) bbox.maxY = y;
+}
+
+function getGeometryCenter(geometry: GeoJSON.Geometry): GeoJSON.Position {
+  // For Point return itself; for everything else return bbox center (good enough for zooming)
+  if (geometry.type === "Point") return geometry.coordinates as GeoJSON.Position;
+
+  const bbox = {
+    minX: Number.POSITIVE_INFINITY,
+    minY: Number.POSITIVE_INFINITY,
+    maxX: Number.NEGATIVE_INFINITY,
+    maxY: Number.NEGATIVE_INFINITY,
+  };
+
+  const walkCoords = (coords: any) => {
+    if (!coords) return;
+    if (typeof coords[0] === "number" && typeof coords[1] === "number") {
+      extendBbox(bbox, coords as GeoJSON.Position);
+      return;
+    }
+    for (const c of coords) walkCoords(c);
+  };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  walkCoords((geometry as any).coordinates);
+
+  if (!Number.isFinite(bbox.minX) || !Number.isFinite(bbox.minY)) {
+    // fallback if geometry is weird
+    return [0, 0];
+  }
+
+  return [(bbox.minX + bbox.maxX) / 2, (bbox.minY + bbox.maxY) / 2];
+}
+
 export class IndoorGeocoder {
   private miniSearch: MiniSearch;
   private cutoffThreshold: number;
@@ -58,7 +95,6 @@ export class IndoorGeocoder {
     this.cutoffThreshold = cutoffThreshold;
 
     this.miniSearch = new MiniSearch({
-      // Search only `name`
       fields: ["name"],
       storeFields: [
         "name",
@@ -98,16 +134,15 @@ export class IndoorGeocoder {
 
   public indoorGeocodeInput(input: string): POI {
     const results = this.miniSearch.search(input);
-    if (results.length === 0) {
-      throw new Error("No results found.");
-    }
+    if (results.length === 0) throw new Error("No results found.");
 
     const topResult = results[0];
+    const geometry = (topResult as any).geometry as GeoJSON.Geometry;
 
     return {
       id: topResult.id,
       name: topResult.name,
-      coordinates: topResult.geometry.coordinates,
+      coordinates: getGeometryCenter(geometry),
       level_id: (topResult as any).level_id ?? null,
       terminal_id: (topResult as any).terminal_id ?? null,
       layer_type: (topResult as any).layer_type ?? null,
@@ -123,20 +158,23 @@ export class IndoorGeocoder {
 
     const topScore = results[0].score;
     const cutoffIndex = this.getCutoffIndex(results, topScore);
-
     const relevantResults =
       cutoffIndex > 0 ? results.slice(0, cutoffIndex) : results.slice(0, 5);
 
     return relevantResults
-      .map((result) => ({
-        id: result.id,
-        name: result.name,
-        coordinates: (result as any).geometry.coordinates,
-        level_id: (result as any).level_id ?? null,
-        terminal_id: (result as any).terminal_id ?? null,
-        layer_type: (result as any).layer_type ?? null,
-        category: (result as any).category ?? null,
-      }))
+      .map((result) => {
+        const geometry = (result as any).geometry as GeoJSON.Geometry;
+
+        return {
+          id: result.id,
+          name: result.name,
+          coordinates: getGeometryCenter(geometry),
+          level_id: (result as any).level_id ?? null,
+          terminal_id: (result as any).terminal_id ?? null,
+          layer_type: (result as any).layer_type ?? null,
+          category: (result as any).category ?? null,
+        };
+      })
       .slice(0, maxResults);
   }
 
