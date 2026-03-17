@@ -30,6 +30,10 @@ function parseLevel(p: Record<string, any> | null | undefined): number | null {
   return Number.isFinite(n) ? n : null;
 }
 
+function keyToCoord(key: string): GeoJSON.Position {
+  return JSON.parse(key) as GeoJSON.Position;
+}
+
 export default class IndoorDirections extends IndoorDirectionsEvented {
   protected declare readonly map: maplibregl.Map;
   private readonly pathFinder: PathFinder;
@@ -150,20 +154,14 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         this.coordMap,
       );
 
-      // Only use snapped point if it exists in the vertex index.
-      // Otherwise, fallback to waypoint (routing may fail, but won't crash).
+      // If we cannot snap, keep original waypoint (routing will likely fail, but won't crash UI)
       const snapped =
-        nearest && this.coordMap.has(JSON.stringify(nearest))
-          ? (nearest as [number, number])
-          : (waypoint.geometry.coordinates as [number, number]);
+        nearest != null ? (nearest as [number, number]) : (waypoint.geometry.coordinates as [number, number]);
 
       return this.buildPoint(snapped, "SNAPPOINT");
     });
   }
 
-  /**
-   * Build routing graph from corridor lines + vertical connectors (points).
-   */
   public loadMapData(
     corridors: GeoJSON.FeatureCollection,
     connectors?: GeoJSON.FeatureCollection,
@@ -178,7 +176,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     this.coordMap = coordMap;
     this.coordMapByLevel = coordMapByLevel;
 
-    // 1) index corridor vertices
+    // index corridor vertices
     corridors.features.forEach((feature) => {
       if (feature.geometry.type !== "LineString") return;
 
@@ -193,9 +191,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         coordMap.get(key)!.add(coordinates);
 
         if (level != null) {
-          if (!coordMapByLevel.has(level)) {
-            coordMapByLevel.set(level, new Map());
-          }
+          if (!coordMapByLevel.has(level)) coordMapByLevel.set(level, new Map());
           const levelMap = coordMapByLevel.get(level)!;
           if (!levelMap.has(key)) levelMap.set(key, new Set());
           levelMap.get(key)!.add(coordinates);
@@ -203,7 +199,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       });
     });
 
-    // 2) corridor edges
+    // corridor edges
     corridors.features.forEach((feature) => {
       if (feature.geometry.type !== "LineString") return;
 
@@ -216,8 +212,6 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
 
         graph.addEdge(from, to, weight);
 
-        // Keep original overlap logic as-is (even though it looks suspicious,
-        // we won't change behavior beyond routing fixes).
         const fromOverlaps = coordMap.get(from);
         if (fromOverlaps && fromOverlaps.size > 1) {
           fromOverlaps.forEach((otherCoords) => {
@@ -226,20 +220,8 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
                 (c) => JSON.stringify(c) === from,
               );
               if (idx !== -1) {
-                if (idx > 0) {
-                  graph.addEdge(
-                    from,
-                    JSON.stringify(otherCoords[idx - 1]),
-                    weight,
-                  );
-                }
-                if (idx < otherCoords.length - 1) {
-                  graph.addEdge(
-                    from,
-                    JSON.stringify(otherCoords[idx + 1]),
-                    weight,
-                  );
-                }
+                if (idx > 0) graph.addEdge(from, JSON.stringify(otherCoords[idx - 1]), weight);
+                if (idx < otherCoords.length - 1) graph.addEdge(from, JSON.stringify(otherCoords[idx + 1]), weight);
               }
             }
           });
@@ -247,7 +229,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       }
     });
 
-    // 3) vertical connectors
+    // vertical connectors -> snap to nearest corridor vertex on same level, then connect same-name across levels
     const connectorNodesByName = new Map<
       string,
       Array<{ level: number; nodeKey: string }>
@@ -275,15 +257,12 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         const connectorKey = JSON.stringify(f.geometry.coordinates);
 
         const snapWeight = this.calculateDistance(f.geometry.coordinates, snapped);
-
-        // Connect connector node to corridor vertex node
         graph.addEdge(connectorKey, snappedKey, snapWeight);
 
         if (!connectorNodesByName.has(name)) connectorNodesByName.set(name, []);
         connectorNodesByName.get(name)!.push({ level, nodeKey: connectorKey });
       }
 
-      // connect same-name nodes across floors
       for (const [, nodes] of connectorNodesByName) {
         nodes.sort((a, b) => a.level - b.level);
 
@@ -314,7 +293,6 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     this.updateSnapPoints();
 
     this.fire(waypointEvent);
-
     this.draw();
 
     try {
@@ -328,7 +306,6 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     const routes: GeoJSON.Position[] = [];
 
     if (!this.hasLoadedGraph) {
-      // Graph not initialized yet: don't attempt routing
       this.routelines = [];
       this.draw();
       return;
@@ -340,18 +317,18 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       );
 
       for (let i = 0; i < this.snappoints.length - 1; i++) {
-        const start = this.snappoints[i].geometry.coordinates;
-        const end = this.snappoints[i + 1].geometry.coordinates;
+        const startCoord = this.snappoints[i].geometry.coordinates as GeoJSON.Position;
+        const endCoord = this.snappoints[i + 1].geometry.coordinates as GeoJSON.Position;
 
-        // IMPORTANT: dijkstra expects vertices by exact JSON-stringified coordinate keys,
-        // and snappoints should now be actual graph vertices (corridor vertex).
-        const segmentRoute = this.pathFinder.dijkstra(start, end);
+        const startKey = JSON.stringify(startCoord);
+        const endKey = JSON.stringify(endCoord);
 
-        if (i === 0) {
-          routes.push(...segmentRoute);
-        } else {
-          routes.push(...segmentRoute.slice(1));
-        }
+        // Route by graph vertices (keys) to avoid "Vertex not found" from non-vertex coords
+        const segmentVertices = this.pathFinder.dijkstraVertices(startKey, endKey);
+        const segmentRoute = segmentVertices.map(keyToCoord);
+
+        if (i === 0) routes.push(...segmentRoute);
+        else routes.push(...segmentRoute.slice(1));
       }
 
       this.fire(
