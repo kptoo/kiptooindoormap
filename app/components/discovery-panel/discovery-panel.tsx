@@ -49,6 +49,11 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
     indoorDirections?.clear();
   }
 
+  function handleDirectionsClick() {
+    if (!selectedPOI) return;
+    setMode("navigation");
+  }
+
   useEffect(() => {
     const handleMapClick = (
       event: MapMouseEvent & {
@@ -70,7 +75,9 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
           name: firstPOI.properties?.name as string,
           coordinates: firstPOI.geometry.coordinates,
         };
+
         setSelectedPOI(poi);
+
         if (mode === "discovery" || mode === "detail") {
           navigateToPOI(poi.coordinates);
           if (mode === "discovery") {
@@ -116,7 +123,11 @@ export default function DiscoveryPanel({ indoorMapLayer }: DiscoveryPanelProps) 
         )}
 
         {mode === "detail" && selectedPOI && (
-          <LocationDetail poi={selectedPOI} onBack={handleBackClick} />
+          <LocationDetail
+            poi={selectedPOI}
+            onBack={handleBackClick}
+            onDirections={handleDirectionsClick}
+          />
         )}
 
         {mode === "navigation" && selectedPOI && (
