@@ -14,6 +14,11 @@ interface LocationDetailProps {
   onDirections: () => void;
 }
 
+function formatLevel(level_id: number | null | undefined): string {
+  if (level_id == null || Number.isNaN(level_id)) return "Unknown level";
+  return `Level ${level_id}`;
+}
+
 export default function LocationDetail({
   poi,
   onBack,
@@ -24,8 +29,9 @@ export default function LocationDetail({
       <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-xl font-semibold">{poi.name}</h2>
-          {/* TODO: add floor to poi properties and use it here */}
-          <p className="text-xs text-gray-600 dark:text-gray-400">1st Floor</p>
+          <p className="text-xs text-gray-600 dark:text-gray-400">
+            {formatLevel(poi.level_id)}
+          </p>
         </div>
 
         <div className="flex space-x-2">
@@ -41,7 +47,6 @@ export default function LocationDetail({
             </DropdownMenuTrigger>
 
             <DropdownMenuContent>
-              {/* TODO: add logic */}
               <DropdownMenuItem onClick={() => console.log("TODO: QR Code")}>
                 <QrCode className="mr-2 size-4" />
                 <span>QR Code</span>
