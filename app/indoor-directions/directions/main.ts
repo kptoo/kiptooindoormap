@@ -48,6 +48,8 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   private coordMapByLevel: Map<number, Map<CoordKey, Set<GeoJSON.Position[]>>> =
     new Map();
 
+  private hasLoadedGraph = false;
+
   constructor(
     map: maplibregl.Map,
     configuration?: Partial<MapLibreGlDirectionsConfiguration>,
@@ -142,17 +144,20 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   }
 
   private updateSnapPoints() {
-    // We don't know waypoint levels from the UI yet, so snap using global map.
     this.snappoints = this._waypoints.map((waypoint) => {
       const nearest = this.findNearestGraphPoint(
         waypoint.geometry.coordinates,
         this.coordMap,
       );
 
-      return this.buildPoint(
-        (nearest as [number, number]) || waypoint.geometry.coordinates,
-        "SNAPPOINT",
-      );
+      // Only use snapped point if it exists in the vertex index.
+      // Otherwise, fallback to waypoint (routing may fail, but won't crash).
+      const snapped =
+        nearest && this.coordMap.has(JSON.stringify(nearest))
+          ? (nearest as [number, number])
+          : (waypoint.geometry.coordinates as [number, number]);
+
+      return this.buildPoint(snapped, "SNAPPOINT");
     });
   }
 
@@ -173,7 +178,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     this.coordMap = coordMap;
     this.coordMapByLevel = coordMapByLevel;
 
-    // 1) index corridor vertices (global + per-level)
+    // 1) index corridor vertices
     corridors.features.forEach((feature) => {
       if (feature.geometry.type !== "LineString") return;
 
@@ -188,7 +193,9 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         coordMap.get(key)!.add(coordinates);
 
         if (level != null) {
-          if (!coordMapByLevel.has(level)) coordMapByLevel.set(level, new Map());
+          if (!coordMapByLevel.has(level)) {
+            coordMapByLevel.set(level, new Map());
+          }
           const levelMap = coordMapByLevel.get(level)!;
           if (!levelMap.has(key)) levelMap.set(key, new Set());
           levelMap.get(key)!.add(coordinates);
@@ -209,6 +216,8 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
 
         graph.addEdge(from, to, weight);
 
+        // Keep original overlap logic as-is (even though it looks suspicious,
+        // we won't change behavior beyond routing fixes).
         const fromOverlaps = coordMap.get(from);
         if (fromOverlaps && fromOverlaps.size > 1) {
           fromOverlaps.forEach((otherCoords) => {
@@ -266,12 +275,15 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         const connectorKey = JSON.stringify(f.geometry.coordinates);
 
         const snapWeight = this.calculateDistance(f.geometry.coordinates, snapped);
+
+        // Connect connector node to corridor vertex node
         graph.addEdge(connectorKey, snappedKey, snapWeight);
 
         if (!connectorNodesByName.has(name)) connectorNodesByName.set(name, []);
         connectorNodesByName.get(name)!.push({ level, nodeKey: connectorKey });
       }
 
+      // connect same-name nodes across floors
       for (const [, nodes] of connectorNodesByName) {
         nodes.sort((a, b) => a.level - b.level);
 
@@ -287,6 +299,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     }
 
     this.pathFinder.setGraph(graph);
+    this.hasLoadedGraph = true;
   }
 
   public setWaypoints(waypoints: [number, number][]) {
@@ -314,6 +327,13 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   protected calculateDirections(originalEvent: IndoorDirectionsWaypointEvent) {
     const routes: GeoJSON.Position[] = [];
 
+    if (!this.hasLoadedGraph) {
+      // Graph not initialized yet: don't attempt routing
+      this.routelines = [];
+      this.draw();
+      return;
+    }
+
     if (this.snappoints.length >= 2) {
       this.fire(
         new IndoorDirectionsRoutingEvent("calculateroutesstart", originalEvent),
@@ -323,10 +343,15 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         const start = this.snappoints[i].geometry.coordinates;
         const end = this.snappoints[i + 1].geometry.coordinates;
 
+        // IMPORTANT: dijkstra expects vertices by exact JSON-stringified coordinate keys,
+        // and snappoints should now be actual graph vertices (corridor vertex).
         const segmentRoute = this.pathFinder.dijkstra(start, end);
 
-        if (i === 0) routes.push(...segmentRoute);
-        else routes.push(...segmentRoute.slice(1));
+        if (i === 0) {
+          routes.push(...segmentRoute);
+        } else {
+          routes.push(...segmentRoute.slice(1));
+        }
       }
 
       this.fire(
