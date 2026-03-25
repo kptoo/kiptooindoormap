@@ -34,6 +34,37 @@ function keyToCoord(key: string): GeoJSON.Position {
   return JSON.parse(key) as GeoJSON.Position;
 }
 
+/**
+ * Haversine distance in kilometres between two [lng, lat] positions.
+ */
+function haversineKm(coord1: GeoJSON.Position, coord2: GeoJSON.Position): number {
+  const [lon1, lat1] = coord1;
+  const [lon2, lat2] = coord2;
+  const R = 6371;
+  const dLat = ((lat2 - lat1) * Math.PI) / 180;
+  const dLon = ((lon2 - lon1) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos((lat1 * Math.PI) / 180) *
+      Math.cos((lat2 * Math.PI) / 180) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
+
+/** Distance in metres */
+function distMetres(a: GeoJSON.Position, b: GeoJSON.Position): number {
+  return haversineKm(a, b) * 1000;
+}
+
+export interface RouteInfo {
+  /** Total route length in metres */
+  distanceMetres: number;
+  /** Estimated walk time in minutes (assuming 80 m/min) */
+  walkMinutes: number;
+}
+
 export default class IndoorDirections extends IndoorDirectionsEvented {
   protected declare readonly map: maplibregl.Map;
   private readonly pathFinder: PathFinder;
@@ -48,11 +79,13 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   protected snappoints: GeoJSON.Feature<GeoJSON.Point>[] = [];
   protected routelines: GeoJSON.Feature<GeoJSON.LineString>[][] = [];
 
-  private coordMap: Map<CoordKey, Set<GeoJSON.Position[]>> = new Map();
   private coordMapByLevel: Map<number, Map<CoordKey, Set<GeoJSON.Position[]>>> =
     new Map();
 
   private hasLoadedGraph = false;
+
+  /** Populated after each successful route calculation */
+  private lastRouteInfo: RouteInfo | null = null;
 
   constructor(
     map: maplibregl.Map,
@@ -103,6 +136,11 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     return this.routelines;
   }
 
+  /** Returns distance/time metadata from the last successful route, or null. */
+  public getLastRouteInfo(): RouteInfo | null {
+    return this.lastRouteInfo;
+  }
+
   protected get snaplines() {
     return this.snappoints.length > 1
       ? this.buildSnaplines(
@@ -112,53 +150,22 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       : [];
   }
 
-  private calculateDistance(coord1: GeoJSON.Position, coord2: GeoJSON.Position) {
-    const [lon1, lat1] = coord1;
-    const [lon2, lat2] = coord2;
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLon = ((lon2 - lon1) * Math.PI) / 180;
-    const a =
-      Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-      Math.cos((lat1 * Math.PI) / 180) *
-        Math.cos((lat2 * Math.PI) / 180) *
-        Math.sin(dLon / 2) *
-        Math.sin(dLon / 2);
-    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-    return R * c;
-  }
-
-  private findNearestGraphPoint(
-    point: GeoJSON.Position,
-    coordMap: Map<CoordKey, Set<GeoJSON.Position[]>>,
-  ): GeoJSON.Position | null {
-    let nearest: GeoJSON.Position | null = null;
-    let minDistance = Infinity;
-
-    coordMap.forEach((_, coordStr) => {
-      const coord = JSON.parse(coordStr);
-      const distance = this.calculateDistance(point, coord);
-      if (distance < minDistance) {
-        minDistance = distance;
-        nearest = coord;
-      }
-    });
-
-    return nearest;
+  /**
+   * Snap a waypoint coordinate onto the graph using edge-projection snapping.
+   * Falls back to nearest-node if the pathfinder has no graph yet.
+   */
+  private snapCoordToGraph(coord: GeoJSON.Position): CoordKey {
+    return this.pathFinder.snapPoint(coord, distMetres);
   }
 
   private updateSnapPoints() {
     this.snappoints = this._waypoints.map((waypoint) => {
-      const nearest = this.findNearestGraphPoint(
-        waypoint.geometry.coordinates,
-        this.coordMap,
-      );
+      const snappedKey = this.snapCoordToGraph(waypoint.geometry.coordinates);
+      const snappedCoord = snappedKey
+        ? (JSON.parse(snappedKey) as [number, number])
+        : (waypoint.geometry.coordinates as [number, number]);
 
-      // If we cannot snap, keep original waypoint (routing will likely fail, but won't crash UI)
-      const snapped =
-        nearest != null ? (nearest as [number, number]) : (waypoint.geometry.coordinates as [number, number]);
-
-      return this.buildPoint(snapped, "SNAPPOINT");
+      return this.buildPoint(snappedCoord, "SNAPPOINT");
     });
   }
 
@@ -166,17 +173,16 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     corridors: GeoJSON.FeatureCollection,
     connectors?: GeoJSON.FeatureCollection,
   ) {
-    const coordMap = new Map<CoordKey, Set<GeoJSON.Position[]>>();
     const coordMapByLevel = new Map<
       number,
       Map<CoordKey, Set<GeoJSON.Position[]>>
     >();
+
     const graph = new Graph();
 
-    this.coordMap = coordMap;
     this.coordMapByLevel = coordMapByLevel;
 
-    // index corridor vertices
+    // ── 1. Index corridor vertices & build graph edges ────────────────────────
     corridors.features.forEach((feature) => {
       if (feature.geometry.type !== "LineString") return;
 
@@ -184,52 +190,33 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       const level = parseLevel(p);
       const coordinates = feature.geometry.coordinates;
 
+      // Index vertices per-level for connector snapping
       coordinates.forEach((coord) => {
         const key = JSON.stringify(coord);
-
-        if (!coordMap.has(key)) coordMap.set(key, new Set());
-        coordMap.get(key)!.add(coordinates);
+        graph.addVertex(key, coord);
 
         if (level != null) {
-          if (!coordMapByLevel.has(level)) coordMapByLevel.set(level, new Map());
+          if (!coordMapByLevel.has(level))
+            coordMapByLevel.set(level, new Map());
           const levelMap = coordMapByLevel.get(level)!;
           if (!levelMap.has(key)) levelMap.set(key, new Set());
           levelMap.get(key)!.add(coordinates);
         }
       });
-    });
 
-    // corridor edges
-    corridors.features.forEach((feature) => {
-      if (feature.geometry.type !== "LineString") return;
-
-      const coordinates = feature.geometry.coordinates;
-
+      // Build edges for consecutive coordinate pairs
       for (let i = 0; i < coordinates.length - 1; i++) {
-        const from = JSON.stringify(coordinates[i]);
-        const to = JSON.stringify(coordinates[i + 1]);
-        const weight = this.calculateDistance(coordinates[i], coordinates[i + 1]);
-
-        graph.addEdge(from, to, weight);
-
-        const fromOverlaps = coordMap.get(from);
-        if (fromOverlaps && fromOverlaps.size > 1) {
-          fromOverlaps.forEach((otherCoords) => {
-            if (otherCoords == coordinates) {
-              const idx = otherCoords.findIndex(
-                (c) => JSON.stringify(c) === from,
-              );
-              if (idx !== -1) {
-                if (idx > 0) graph.addEdge(from, JSON.stringify(otherCoords[idx - 1]), weight);
-                if (idx < otherCoords.length - 1) graph.addEdge(from, JSON.stringify(otherCoords[idx + 1]), weight);
-              }
-            }
-          });
-        }
+        const fromKey = JSON.stringify(coordinates[i]);
+        const toKey = JSON.stringify(coordinates[i + 1]);
+        const weight = distMetres(coordinates[i], coordinates[i + 1]);
+        graph.addEdge(fromKey, toKey, weight);
       }
     });
 
-    // vertical connectors -> snap to nearest corridor vertex on same level, then connect same-name across levels
+    // ── 2. Stitch any disconnected corridor islands ───────────────────────────
+    graph.stitchComponents(distMetres);
+
+    // ── 3. Vertical connectors ────────────────────────────────────────────────
     const connectorNodesByName = new Map<
       string,
       Array<{ level: number; nodeKey: string }>
@@ -247,30 +234,42 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         const levelMap = coordMapByLevel.get(level);
         if (!levelMap || levelMap.size === 0) continue;
 
-        const snapped = this.findNearestGraphPoint(
-          f.geometry.coordinates,
-          levelMap,
-        );
-        if (!snapped) continue;
+        // Find nearest corridor vertex on this level
+        let nearest: GeoJSON.Position | null = null;
+        let minDist = Infinity;
+        levelMap.forEach((_, coordStr) => {
+          const coord = JSON.parse(coordStr) as GeoJSON.Position;
+          const d = distMetres(f.geometry.coordinates, coord);
+          if (d < minDist) {
+            minDist = d;
+            nearest = coord;
+          }
+        });
 
-        const snappedKey = JSON.stringify(snapped);
+        if (!nearest) continue;
+
+        const snappedKey = JSON.stringify(nearest);
         const connectorKey = JSON.stringify(f.geometry.coordinates);
 
-        const snapWeight = this.calculateDistance(f.geometry.coordinates, snapped);
-        graph.addEdge(connectorKey, snappedKey, snapWeight);
+        graph.addVertex(connectorKey, f.geometry.coordinates);
+        graph.addEdge(connectorKey, snappedKey, minDist);
 
-        if (!connectorNodesByName.has(name)) connectorNodesByName.set(name, []);
-        connectorNodesByName.get(name)!.push({ level, nodeKey: connectorKey });
+        if (!connectorNodesByName.has(name))
+          connectorNodesByName.set(name, []);
+        connectorNodesByName
+          .get(name)!
+          .push({ level, nodeKey: connectorKey });
       }
 
+      // Link same-name connectors across levels (stairs / lifts)
       for (const [, nodes] of connectorNodesByName) {
         nodes.sort((a, b) => a.level - b.level);
 
         for (let i = 0; i < nodes.length - 1; i++) {
           const a = nodes[i];
           const b = nodes[i + 1];
-
           const floorsDelta = Math.abs(b.level - a.level);
+          // Slight penalty per floor to prefer same-level routes when possible
           const verticalWeight = 0.02 + floorsDelta * 0.02;
           graph.addEdge(a.nodeKey, b.nodeKey, verticalWeight);
         }
@@ -304,6 +303,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
 
   protected calculateDirections(originalEvent: IndoorDirectionsWaypointEvent) {
     const routes: GeoJSON.Position[] = [];
+    this.lastRouteInfo = null;
 
     if (!this.hasLoadedGraph) {
       this.routelines = [];
@@ -317,14 +317,43 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       );
 
       for (let i = 0; i < this.snappoints.length - 1; i++) {
-        const startCoord = this.snappoints[i].geometry.coordinates as GeoJSON.Position;
-        const endCoord = this.snappoints[i + 1].geometry.coordinates as GeoJSON.Position;
+        const startCoord = this.snappoints[i].geometry
+          .coordinates as GeoJSON.Position;
+        const endCoord = this.snappoints[i + 1].geometry
+          .coordinates as GeoJSON.Position;
 
         const startKey = JSON.stringify(startCoord);
         const endKey = JSON.stringify(endCoord);
 
-        // Route by graph vertices (keys) to avoid "Vertex not found" from non-vertex coords
-        const segmentVertices = this.pathFinder.dijkstraVertices(startKey, endKey);
+        // ── Guarantee connectivity: if the two snap nodes ended up in
+        //    different components (e.g. after virtual node injection),
+        //    add a direct bridge edge before routing. ────────���─────────
+        const graph = this.pathFinder.getGraph();
+        const components = graph.getComponents();
+        if (components.length > 1) {
+          const startComp = components.find((c) => c.has(startKey));
+          const endComp = components.find((c) => c.has(endKey));
+          if (startComp && endComp && startComp !== endComp) {
+            graph.addEdge(startKey, endKey, distMetres(startCoord, endCoord));
+          }
+        }
+
+        const segmentVertices = this.pathFinder.dijkstraVertices(
+          startKey,
+          endKey,
+        );
+
+        if (segmentVertices.length === 0) {
+          console.warn(
+            "IndoorDirections: no path found between snap points",
+            startKey,
+            endKey,
+          );
+          this.routelines = [];
+          this.draw();
+          return;
+        }
+
         const segmentRoute = segmentVertices.map(keyToCoord);
 
         if (i === 0) routes.push(...segmentRoute);
@@ -336,6 +365,16 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       );
 
       this.routelines = [this.buildRouteLines(routes)];
+
+      // ── Compute route metadata ──────────────────────────────────────
+      let totalMetres = 0;
+      for (let i = 0; i < routes.length - 1; i++) {
+        totalMetres += distMetres(routes[i], routes[i + 1]);
+      }
+      this.lastRouteInfo = {
+        distanceMetres: Math.round(totalMetres),
+        walkMinutes: Math.max(1, Math.round(totalMetres / 80)),
+      };
     } else {
       this.routelines = [];
     }
@@ -358,7 +397,9 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
 
     if (this.map.getSource(this.configuration.sourceName)) {
       (
-        this.map.getSource(this.configuration.sourceName) as maplibregl.GeoJSONSource
+        this.map.getSource(
+          this.configuration.sourceName,
+        ) as maplibregl.GeoJSONSource
       ).setData(geoJson);
     }
   }
@@ -380,5 +421,6 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   clear() {
     this.setWaypoints([]);
     this.routelines = [];
+    this.lastRouteInfo = null;
   }
 }
