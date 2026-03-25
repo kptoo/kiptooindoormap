@@ -4,6 +4,8 @@ import {
   ArrowUpDown,
   Dot,
   MapPin,
+  Timer,
+  Ruler,
 } from "lucide-react";
 import { LngLatBounds } from "maplibre-gl";
 import { useEffect, useState } from "react";
@@ -29,15 +31,21 @@ export default function NavigationView({
   indoorGeocoder,
   indoorDirections,
 }: NavigationViewProps) {
-  const [activeInput, setActiveInput] = useState<"departure" | "destination" | null>(
-    null,
-  );
+  const [activeInput, setActiveInput] = useState<
+    "departure" | "destination" | null
+  >(null);
   const [departureLocation, setDepartureLocation] = useState("");
   const [destinationLocation, setDestinationLocation] = useState(
     selectedPOI?.name || "",
   );
   const [suggestions, setSuggestions] = useState<POI[]>([]);
   const [isAccessibleRoute, setIsAccessibleRoute] = useState(false);
+  const [routeError, setRouteError] = useState<string | null>(null);
+  const [routeInfo, setRouteInfo] = useState<{
+    distanceMetres: number;
+    walkMinutes: number;
+  } | null>(null);
+
   const map = useMapStore((state) => state.mapInstance);
 
   const activeQuery =
@@ -61,7 +69,8 @@ export default function NavigationView({
       activeInput === "destination" ? suggestion.name : destinationLocation;
 
     if (activeInput === "departure") setDepartureLocation(suggestion.name);
-    else if (activeInput === "destination") setDestinationLocation(suggestion.name);
+    else if (activeInput === "destination")
+      setDestinationLocation(suggestion.name);
 
     setSuggestions([]);
     setActiveInput(null);
@@ -70,11 +79,19 @@ export default function NavigationView({
   };
 
   function handleRouting(departureValue: string, destinationValue: string) {
+    setRouteError(null);
+    setRouteInfo(null);
+
     if (!departureValue || !destinationValue) return;
     if (!indoorGeocoder) return;
 
     if (!indoorDirections) {
-      console.error("IndoorDirections is not ready yet (map not loaded).");
+      setRouteError("Navigation is not ready yet — please wait for the map to load.");
+      return;
+    }
+
+    if (departureValue.trim().toLowerCase() === destinationValue.trim().toLowerCase()) {
+      setRouteError("Departure and destination are the same location.");
       return;
     }
 
@@ -83,7 +100,8 @@ export default function NavigationView({
       const destinationGeo = indoorGeocoder.indoorGeocodeInput(destinationValue);
 
       if (!departureGeo?.coordinates || !destinationGeo?.coordinates) {
-        throw new Error("Invalid geocoding results");
+        setRouteError("Could not find one or both locations. Try selecting from suggestions.");
+        return;
       }
 
       const departureCoord = departureGeo.coordinates as [number, number];
@@ -91,37 +109,53 @@ export default function NavigationView({
 
       indoorDirections.setWaypoints([departureCoord, destinationCoord]);
 
-      const routeGeometry = indoorDirections.routelinesCoordinates?.[0]?.[0]?.geometry;
-      const coordinates = routeGeometry?.coordinates as [number, number][] | undefined;
+      const routeGeometry =
+        indoorDirections.routelinesCoordinates?.[0]?.[0]?.geometry;
+      const coordinates = routeGeometry?.coordinates as
+        | [number, number][]
+        | undefined;
 
       if (!coordinates || coordinates.length < 2) {
-        console.error("No route found (graph may be empty or disconnected).", {
-          departure: departureValue,
-          destination: destinationValue,
-          departureCoord,
-          destinationCoord,
-        });
+        setRouteError(
+          "No route found — the locations may not be connected on this floor.",
+        );
         return;
       }
 
+      // Fit map to route bounds
       let bounds = new LngLatBounds(coordinates[0], coordinates[0]);
       for (const coord of coordinates) bounds = bounds.extend(coord);
-
       map?.fitBounds(bounds, { padding: 200, speed: 0.5 });
+
+      // Show distance + walk time
+      const info = indoorDirections.getLastRouteInfo();
+      if (info) setRouteInfo(info);
     } catch (error) {
       console.error("Error during routing:", error);
+      setRouteError("An unexpected error occurred while calculating the route.");
     }
   }
 
   function handleSwapLocations() {
+    const prev = departureLocation;
     setDepartureLocation(destinationLocation);
-    setDestinationLocation(departureLocation);
+    setDestinationLocation(prev);
+    setRouteError(null);
+    setRouteInfo(null);
+  }
+
+  function handleBack() {
+    // Clear the route from the map when navigating back
+    indoorDirections?.clear();
+    setRouteError(null);
+    setRouteInfo(null);
+    handleBackClick();
   }
 
   return (
     <>
       <div className="mb-2 flex items-center justify-between">
-        <Button size="sm" variant="ghost" onClick={handleBackClick}>
+        <Button size="sm" variant="ghost" onClick={handleBack}>
           <ArrowLeft size={20} className="mr-2" />
           Back
         </Button>
@@ -130,6 +164,7 @@ export default function NavigationView({
           pressed={isAccessibleRoute}
           size="icon"
           onClick={() => setIsAccessibleRoute(!isAccessibleRoute)}
+          title="Toggle accessible route"
         >
           <Accessibility size={18} />
         </Toggle>
@@ -152,7 +187,11 @@ export default function NavigationView({
               type="text"
               placeholder="Choose starting point"
               value={departureLocation}
-              onChange={(e) => setDepartureLocation(e.target.value)}
+              onChange={(e) => {
+                setDepartureLocation(e.target.value);
+                setRouteInfo(null);
+                setRouteError(null);
+              }}
               onFocus={() => setActiveInput("departure")}
               onBlur={() => setActiveInput(null)}
             />
@@ -166,7 +205,11 @@ export default function NavigationView({
               type="text"
               placeholder="Choose destination"
               value={destinationLocation}
-              onChange={(e) => setDestinationLocation(e.target.value)}
+              onChange={(e) => {
+                setDestinationLocation(e.target.value);
+                setRouteInfo(null);
+                setRouteError(null);
+              }}
               onFocus={() => setActiveInput("destination")}
               onBlur={() => setActiveInput(null)}
             />
@@ -179,6 +222,27 @@ export default function NavigationView({
           </Button>
         </div>
       </div>
+
+      {/* Route info banner */}
+      {routeInfo && (
+        <div className="mt-3 flex items-center gap-4 rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:bg-blue-950 dark:text-blue-200">
+          <span className="flex items-center gap-1">
+            <Ruler size={14} />
+            {routeInfo.distanceMetres} m
+          </span>
+          <span className="flex items-center gap-1">
+            <Timer size={14} />
+            ~{routeInfo.walkMinutes} min walk
+          </span>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {routeError && (
+        <div className="mt-3 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
+          ⚠️ {routeError}
+        </div>
+      )}
 
       {activeInput && activeQuery && (
         <>
