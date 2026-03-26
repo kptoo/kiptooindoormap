@@ -1,18 +1,25 @@
+import MaplibreInspect from "@maplibre/maplibre-gl-inspect";
+import "@maplibre/maplibre-gl-inspect/dist/maplibre-gl-inspect.css";
+import maplibregl, { FullscreenControl, NavigationControl } from "maplibre-gl";
+import "maplibre-gl/dist/maplibre-gl.css";
 import { useEffect, useRef, useState } from "react";
-import { useTheme } from "remix-themes";
+import { Theme, useTheme } from "remix-themes";
+import config from "~/config";
+import { loadAirportData } from "~/lib/airport-data-loader";
 import IndoorMapLayer from "~/layers/indoor-map-layer";
 import RoutingLayer from "~/layers/routing-layer";
-import useMapStore from "~/stores/use-map-store";
+import POIsLayer from "~/layers/pois-layer";
+import { IndoorMapGeoJSON } from "~/types/geojson";
 import useAirportStore from "~/stores/airport-store";
 import useFloorStore from "~/stores/floor-store";
+import useMapStore from "~/stores/use-map-store";
 import useDirections from "~/hooks/use-directions";
-import { loadAirportData } from "~/lib/airport-data-loader";
-import type { IndoorMapGeoJSON } from "~/types/geojson";
+import OIMLogo from "../controls/oim-logo";
+import ContactBanner from "./contact-banner";
 import DiscoveryPanel from "./discovery-panel/discovery-panel";
-import FloorSelector from "./floor-selector";
-import FloorUpDownControl from "./floor-up-down-control";
-import maplibregl from "maplibre-gl";
-import "maplibre-gl/dist/maplibre-gl.css";
+import { FloorSelector } from "./floor-selector";
+import { FloorUpDownControl } from "./floor-up-down-control";
+import "~/maplibre.css";
 
 export default function MapComponent() {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -49,56 +56,70 @@ export default function MapComponent() {
       ),
   );
 
-  // ── Initialise map ────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!mapContainer.current || map) return;
-
-    const instance = new maplibregl.Map({
-      container: mapContainer.current,
-      style:
-        theme === "dark"
-          ? "https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json"
-          : "https://basemaps.cartocdn.com/gl/positron-gl-style/style.json",
-      center: [-118.4085, 33.9425],
-      zoom: 16,
-      maxZoom: 22,
-    });
-
-    instance.on("load", () => {
-      instance.addLayer(indoorMapLayer);
-      instance.addLayer(routingLayer);
-      setMapInstance(instance);
-    });
-
-    return () => {
-      instance.remove();
-      setMapInstance(null);
-    };
-  }, []);
-
   // ── Load airport data on mount ────────────────────────────────────────────
   useEffect(() => {
-    if (!map) return;
-
     setIsLoading(true);
-
     loadAirportData()
       .then((data) => {
         setAirportData(data);
         setAvailableTerminals(data.terminals);
 
+        const defaultFloor = data.floors[0] ?? 1;
+        setCurrentFloor(defaultFloor);
+
         indoorMapLayer.updateData(data.indoor_map);
         routingLayer.updateData(data.routing);
 
-        // Set initial floor to the first available floor
-        if (data.floors.length > 0) {
-          const initialFloor = data.floors.includes(3) ? 3 : data.floors[0];
-          setCurrentFloor(initialFloor);
-        }
+        indoorMapLayer.setFloorLevel(defaultFloor);
       })
-      .catch((e) => console.error("Failed to load airport data:", e))
+      .catch((err) => console.error("Failed to load airport data:", err))
       .finally(() => setIsLoading(false));
-  }, [map]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // intentionally run once on mount
+
+  // ── Initialise MapLibre ───────────────────────────────────────────────────
+  useEffect(() => {
+    if (!mapContainer.current) return;
+
+    const map = new maplibregl.Map({
+      ...config.mapConfig,
+      style: config.mapStyles[theme as Theme],
+      container: mapContainer.current,
+    });
+    setMapInstance(map);
+
+    map.on("load", () => {
+      try {
+        map.addLayer(indoorMapLayer);
+        map.addLayer(routingLayer);
+        map.addLayer(
+          new POIsLayer({ type: "FeatureCollection", features: [] }, theme as string),
+        );
+      } catch (error) {
+        console.error("Failed to initialise map layers:", error);
+      }
+    });
+
+    map.addControl(new NavigationControl(), "bottom-right");
+    map.addControl(new FullscreenControl(), "bottom-right");
+
+    if (process.env.NODE_ENV === "development") {
+      map.addControl(
+        new MaplibreInspect({
+          popup: new maplibregl.Popup({ closeOnClick: false }),
+          blockHoverPopupOnClick: true,
+        }),
+        "bottom-right",
+      );
+    }
+
+    map.addControl(new OIMLogo());
+
+    return () => {
+      map.remove();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [theme]); // re-init map when theme changes
 
   // ── Build indoor routing graph from corridors + connectors ─────────────────
   //    Store the full dataset; actual per-level graph is built by setLevel().
@@ -107,7 +128,6 @@ export default function MapComponent() {
     if (!airportData?.routing) return;
 
     try {
-      // Pass vertical_circulation points as connectors (they are in pois)
       indoorDirections.loadMapData(
         airportData.routing,
         airportData.pois,
@@ -117,9 +137,7 @@ export default function MapComponent() {
     }
   }, [indoorDirections, airportData?.routing]);
 
-  // ── Rebuild graph when floor changes — mirrors HTML demo's level switch ────
-  //    The HTML demo calls buildGraph(currentLevel) fresh on every level change.
-  //    We do the same via indoorDirections.setLevel(currentFloor).
+  // ── Rebuild graph when floor changes ─────────────────────────────────────
   useEffect(() => {
     if (!indoorDirections) return;
     if (currentFloor == null) return;
@@ -141,6 +159,7 @@ export default function MapComponent() {
       )}
 
       <div ref={mapContainer} className="size-full" />
+      <ContactBanner />
     </div>
   );
 }
