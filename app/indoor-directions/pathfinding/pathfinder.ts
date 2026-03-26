@@ -1,23 +1,6 @@
 import { Vertex } from "../types";
 import Graph, { ptKey, keyToPosition } from "./graph";
 
-/**
- * Closest point on segment [p1, p2] to point p. All coords are [lng, lat].
- */
-function closestPointOnSegment(
-  p: GeoJSON.Position,
-  p1: GeoJSON.Position,
-  p2: GeoJSON.Position,
-): GeoJSON.Position {
-  const dx = p2[0] - p1[0];
-  const dy = p2[1] - p1[1];
-  const lenSq = dx * dx + dy * dy;
-  if (lenSq === 0) return p1;
-  let t = ((p[0] - p1[0]) * dx + (p[1] - p1[1]) * dy) / lenSq;
-  t = Math.max(0, Math.min(1, t));
-  return [p1[0] + t * dx, p1[1] + t * dy];
-}
-
 export default class Pathfinder {
   private graph: Graph;
 
@@ -26,146 +9,55 @@ export default class Pathfinder {
   }
 
   /**
-   * Snap an external [lng, lat] coordinate onto the graph.
+   * Route between two vertex keys — direct port of the HTML demo's dijkstra().
    *
-   * Mirrors the HTML demo's Graph.snapPoint() exactly:
-   * 1. Find the nearest existing graph node.
-   * 2. Project onto every edge segment to find the nearest foot-point.
-   * 3. If the foot-point is >0.5 m closer, inject a virtual node using
-   *    addNode() (which uses ptKey() grid-snapping) and connect it to
-   *    both endpoints of the split edge.
-   *
-   * Returns a grid-snapped vertex key that is guaranteed to exist in the graph.
-   */
-  public snapPoint(
-    coord: GeoJSON.Position,
-    distanceFn: (a: GeoJSON.Position, b: GeoJSON.Position) => number,
-  ): Vertex {
-    const [lng, lat] = coord;
-    const vertices = this.graph.getVertexs();
-
-    // ── 1. Nearest existing node ────────────────────────────────────────────
-    let bestNode: Vertex | null = null;
-    let bestNodeDist = Infinity;
-
-    for (const v of vertices) {
-      const vc = this.graph.getCoord(v);
-      if (!vc) continue;
-      const d = distanceFn(coord, vc);
-      if (d < bestNodeDist) {
-        bestNodeDist = d;
-        bestNode = v;
-      }
-    }
-
-    // ── 2. Nearest projection onto any edge segment ─────────────────────────
-    let bestProjCoord: GeoJSON.Position | null = null;
-    let bestProjDist = Infinity;
-    let bestEdge: [Vertex, Vertex] | null = null;
-    const seen = new Set<string>();
-
-    for (const v1 of vertices) {
-      for (const edge of this.graph.getEdges(v1)) {
-        const v2 = edge.to;
-        const eid = v1 < v2 ? `${v1}|${v2}` : `${v2}|${v1}`;
-        if (seen.has(eid)) continue;
-        seen.add(eid);
-
-        const c1 = this.graph.getCoord(v1);
-        const c2 = this.graph.getCoord(v2);
-        if (!c1 || !c2) continue;
-
-        const foot = closestPointOnSegment(coord, c1, c2);
-        const d = distanceFn(coord, foot);
-        if (d < bestProjDist) {
-          bestProjDist = d;
-          bestProjCoord = foot;
-          bestEdge = [v1, v2];
-        }
-      }
-    }
-
-    // ── 3. Inject virtual node if projection is meaningfully closer ──────────
-    if (bestProjCoord && bestEdge && bestProjDist < bestNodeDist - 0.5) {
-      // addNode() uses ptKey() grid-snapping — the returned key is guaranteed
-      // to exist in the graph after this call.
-      const vk = this.graph.addNode(bestProjCoord[0], bestProjCoord[1]);
-
-      // Split the edge: connect virtual node to both endpoints
-      const c1 = this.graph.getCoord(bestEdge[0])!;
-      const c2 = this.graph.getCoord(bestEdge[1])!;
-      const vCoord = this.graph.getCoord(vk)!;
-      this.graph.addEdge(vk, bestEdge[0], distanceFn(vCoord, c1));
-      this.graph.addEdge(vk, bestEdge[1], distanceFn(vCoord, c2));
-
-      return vk;
-    }
-
-    return bestNode!;
-  }
-
-  /**
-   * Route between two vertex keys using Dijkstra's algorithm.
-   * Returns the list of vertex keys along the shortest path,
-   * or an empty array if no path exists.
+   * Uses the same plain-object dist2/prev/pq pattern. Returns [] if no path
+   * (never throws on missing vertices after snapping).
    */
   public dijkstraVertices(start: Vertex, end: Vertex): Vertex[] {
-    // Validate — throw only if the vertex truly doesn't exist
-    if (!this.graph.hasVertex(start)) {
-      throw new Error(`Vertex not found in navigation graph: ${start}`);
-    }
-    if (!this.graph.hasVertex(end)) {
-      throw new Error(`Vertex not found in navigation graph: ${end}`);
+    if (!this.graph.hasVertex(start) || !this.graph.hasVertex(end)) {
+      console.warn(
+        "IndoorDirections: vertex not in graph after snapping",
+        start,
+        end,
+      );
+      return [];
     }
 
-    const dist: Record<Vertex, number> = {};
-    const previous: Record<Vertex, Vertex | null> = {};
-
-    for (const v of this.graph.getVertexs()) {
-      dist[v] = Infinity;
-      previous[v] = null;
-    }
-    dist[start] = 0;
-
-    // Simple priority queue: array of [cost, vertex]
-    const heap: [number, Vertex][] = [[0, start]];
+    const dist2: Record<Vertex, number> = { [start]: 0 };
+    const prev: Record<Vertex, Vertex | undefined> = {};
     const visited = new Set<Vertex>();
+    // min-heap via sorted array — same as HTML demo (fine for indoor graph size)
+    const pq: [number, Vertex][] = [[0, start]];
 
-    while (heap.length > 0) {
-      // Extract minimum cost entry
-      let minIdx = 0;
-      for (let i = 1; i < heap.length; i++) {
-        if (heap[i][0] < heap[minIdx][0]) minIdx = i;
-      }
-      const [d, current] = heap[minIdx];
-      heap.splice(minIdx, 1);
+    while (pq.length) {
+      pq.sort((a, b) => a[0] - b[0]);
+      const [d, u] = pq.shift()!;
+      if (visited.has(u)) continue;
+      visited.add(u);
+      if (u === end) break;
 
-      if (visited.has(current)) continue;
-      visited.add(current);
-      if (current === end) break;
-
-      for (const { to, weight } of this.graph.getEdges(current)) {
-        if (visited.has(to)) continue;
-        const alt = d + weight;
-        if (alt < dist[to]) {
-          dist[to] = alt;
-          previous[to] = current;
-          heap.push([alt, to]);
+      for (const { key: v, cost } of this.graph.adj[u] || []) {
+        if (visited.has(v)) continue;
+        const nd = d + cost;
+        if (dist2[v] === undefined || nd < dist2[v]) {
+          dist2[v] = nd;
+          prev[v] = u;
+          pq.push([nd, v]);
         }
       }
     }
 
-    if (dist[end] === Infinity) return [];
+    if (dist2[end] === undefined) return [];
 
     // Reconstruct path
     const path: Vertex[] = [];
-    let current: Vertex | null = end;
-    while (current !== null && current !== undefined) {
-      path.unshift(current);
-      current = previous[current] ?? null;
+    let cur: Vertex | undefined = end;
+    while (cur !== undefined) {
+      path.unshift(cur);
+      cur = prev[cur];
     }
 
-    if (path[0] !== start) return [];
     return path;
   }
 
@@ -177,13 +69,12 @@ export default class Pathfinder {
     end: Vertex | GeoJSON.Position,
   ): GeoJSON.Position[] {
     const startKey = Array.isArray(start)
-      ? ptKey(start[0], start[1])
+      ? ptKey((start as number[])[0], (start as number[])[1])
       : (start as string);
     const endKey = Array.isArray(end)
-      ? ptKey(end[0], end[1])
+      ? ptKey((end as number[])[0], (end as number[])[1])
       : (end as string);
-    const pathVertices = this.dijkstraVertices(startKey, endKey);
-    return pathVertices.map(keyToPosition);
+    return this.dijkstraVertices(startKey, endKey).map(keyToPosition);
   }
 
   public setGraph(graph: Graph) {
