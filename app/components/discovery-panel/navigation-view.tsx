@@ -4,8 +4,8 @@ import {
   ArrowUpDown,
   Dot,
   MapPin,
-  Timer,
   Ruler,
+  Timer,
 } from "lucide-react";
 import { LngLatBounds } from "maplibre-gl";
 import { useEffect, useState } from "react";
@@ -44,6 +44,8 @@ export default function NavigationView({
   const [routeInfo, setRouteInfo] = useState<{
     distanceMetres: number;
     walkMinutes: number;
+    fromName: string;
+    toName: string;
   } | null>(null);
 
   const map = useMapStore((state) => state.mapInstance);
@@ -53,10 +55,8 @@ export default function NavigationView({
 
   useEffect(() => {
     if (!indoorGeocoder) return;
-
     if (activeInput && activeQuery) {
-      const newSuggestions = indoorGeocoder.getAutocompleteResults(activeQuery);
-      setSuggestions(newSuggestions);
+      setSuggestions(indoorGeocoder.getAutocompleteResults(activeQuery));
     } else {
       setSuggestions([]);
     }
@@ -74,7 +74,6 @@ export default function NavigationView({
 
     setSuggestions([]);
     setActiveInput(null);
-
     handleRouting(newDeparture, newDestination);
   };
 
@@ -90,8 +89,11 @@ export default function NavigationView({
       return;
     }
 
-    if (departureValue.trim().toLowerCase() === destinationValue.trim().toLowerCase()) {
-      setRouteError("Departure and destination are the same location.");
+    if (
+      departureValue.trim().toLowerCase() ===
+      destinationValue.trim().toLowerCase()
+    ) {
+      setRouteError("⚠️ Departure and destination are the same location.");
       return;
     }
 
@@ -100,7 +102,9 @@ export default function NavigationView({
       const destinationGeo = indoorGeocoder.indoorGeocodeInput(destinationValue);
 
       if (!departureGeo?.coordinates || !destinationGeo?.coordinates) {
-        setRouteError("Could not find one or both locations. Try selecting from suggestions.");
+        setRouteError(
+          "⚠️ Could not find one or both locations. Try selecting from suggestions.",
+        );
         return;
       }
 
@@ -117,22 +121,31 @@ export default function NavigationView({
 
       if (!coordinates || coordinates.length < 2) {
         setRouteError(
-          "No route found — the locations may not be connected on this floor.",
+          "❌ No route found — the locations may not be connected on this floor.",
         );
         return;
       }
 
-      // Fit map to route bounds
+      // Fit map to route — same as HTML demo's fitBounds with padding:60
       let bounds = new LngLatBounds(coordinates[0], coordinates[0]);
       for (const coord of coordinates) bounds = bounds.extend(coord);
-      map?.fitBounds(bounds, { padding: 200, speed: 0.5 });
+      map?.fitBounds(bounds, { padding: 60, speed: 0.5 });
 
-      // Show distance + walk time
+      // Show route info — mirrors HTML demo's status bar message
       const info = indoorDirections.getLastRouteInfo();
-      if (info) setRouteInfo(info);
+      if (info) {
+        setRouteInfo({
+          distanceMetres: info.distanceMetres,
+          walkMinutes: info.walkMinutes,
+          fromName: departureValue,
+          toName: destinationValue,
+        });
+      }
     } catch (error) {
       console.error("Error during routing:", error);
-      setRouteError("An unexpected error occurred while calculating the route.");
+      setRouteError(
+        "An unexpected error occurred while calculating the route.",
+      );
     }
   }
 
@@ -145,7 +158,6 @@ export default function NavigationView({
   }
 
   function handleBack() {
-    // Clear the route from the map when navigating back
     indoorDirections?.clear();
     setRouteError(null);
     setRouteInfo(null);
@@ -172,10 +184,12 @@ export default function NavigationView({
 
       <div className="flex space-x-2">
         <div className="w-full space-y-4">
+          {/* Departure input */}
           <div className="flex items-center space-x-4">
             <div className="relative">
               <div className="flex h-full w-4 items-center justify-center">
-                <div className="size-3 rounded-full border-2 border-white bg-[#1d9bf0] ring-4 ring-blue-100 dark:ring-0" />
+                {/* Green origin dot — mirrors HTML demo's #00e676 marker */}
+                <div className="size-3 rounded-full border-2 border-white bg-[#00e676] ring-4 ring-green-100 dark:ring-0" />
               </div>
               <div className="absolute left-1/2 top-full mt-1 flex -translate-x-1/2 flex-col items-center">
                 <Dot size={12} />
@@ -197,9 +211,11 @@ export default function NavigationView({
             />
           </div>
 
+          {/* Destination input */}
           <div className="mb-2 flex items-center space-x-4">
             <div className="w-4">
-              <MapPin size={16} className="text-red-600 dark:text-red-300" />
+              {/* Red destination pin — mirrors HTML demo's #e94560 marker */}
+              <MapPin size={16} className="text-[#e94560]" />
             </div>
             <Input
               type="text"
@@ -223,24 +239,31 @@ export default function NavigationView({
         </div>
       </div>
 
-      {/* Route info banner */}
+      {/* Route info banner — mirrors HTML demo's status bar ✅ message */}
       {routeInfo && (
-        <div className="mt-3 flex items-center gap-4 rounded-lg bg-blue-50 px-4 py-2 text-sm text-blue-800 dark:bg-blue-950 dark:text-blue-200">
-          <span className="flex items-center gap-1">
-            <Ruler size={14} />
-            {routeInfo.distanceMetres} m
-          </span>
-          <span className="flex items-center gap-1">
-            <Timer size={14} />
-            ~{routeInfo.walkMinutes} min walk
-          </span>
+        <div className="mt-3 rounded-lg border border-orange-200 bg-orange-50 px-4 py-2 dark:border-orange-900 dark:bg-orange-950">
+          <div className="flex items-center gap-4 text-sm font-medium text-orange-800 dark:text-orange-200">
+            <span className="flex items-center gap-1">
+              <Ruler size={13} />
+              <strong>{routeInfo.distanceMetres} m</strong>
+            </span>
+            <span className="flex items-center gap-1">
+              <Timer size={13} />
+              ~<strong>{routeInfo.walkMinutes} min</strong> walk
+            </span>
+          </div>
+          <p className="mt-1 truncate text-xs text-orange-600 dark:text-orange-400">
+            <span className="text-[#00e676]">●</span> {routeInfo.fromName}
+            {" → "}
+            <span className="text-[#e94560]">●</span> {routeInfo.toName}
+          </p>
         </div>
       )}
 
       {/* Error banner */}
       {routeError && (
         <div className="mt-3 rounded-lg bg-red-50 px-4 py-2 text-sm text-red-700 dark:bg-red-950 dark:text-red-300">
-          ⚠️ {routeError}
+          {routeError}
         </div>
       )}
 
