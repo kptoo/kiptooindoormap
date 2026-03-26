@@ -1,4 +1,4 @@
-import Graph, { ptKey, keyToPosition } from "../pathfinding/graph";
+import Graph, { ptKey, keyToPosition, distMetres } from "../pathfinding/graph";
 import PathFinder from "../pathfinding/pathfinder";
 import { MapLibreGlDirectionsConfiguration } from "../types";
 import {
@@ -32,17 +32,8 @@ function parseLevel(
   return Number.isFinite(n) ? n : null;
 }
 
-/** Euclidean distance in metres — mirrors the HTML demo's dist() */
-function distMetres(a: GeoJSON.Position, b: GeoJSON.Position): number {
-  const dx = (a[0] - b[0]) * Math.cos(((a[1] + b[1]) * 0.5 * Math.PI) / 180) * 111320;
-  const dy = (a[1] - b[1]) * 110540;
-  return Math.sqrt(dx * dx + dy * dy);
-}
-
 export interface RouteInfo {
-  /** Total route length in metres */
   distanceMetres: number;
-  /** Estimated walk time in minutes (80 m/min walking pace) */
   walkMinutes: number;
 }
 
@@ -60,11 +51,9 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   protected snappoints: GeoJSON.Feature<GeoJSON.Point>[] = [];
   protected routelines: GeoJSON.Feature<GeoJSON.LineString>[][] = [];
 
-  /** per-level vertex index for connector snapping */
-  private coordMapByLevel: Map<
-    number,
-    Map<CoordKey, GeoJSON.Position>
-  > = new Map();
+  /** Per-level vertex index for connector snapping */
+  private coordMapByLevel: Map<number, Map<CoordKey, GeoJSON.Position>> =
+    new Map();
 
   private hasLoadedGraph = false;
   private lastRouteInfo: RouteInfo | null = null;
@@ -90,7 +79,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     });
   }
 
-  // ── Coordinate accessors ──────────────────────────────────────────────────
+  // ── Accessors ─────────────────────────────────────────────────────────────
 
   protected get waypointsCoordinates(): [number, number][] {
     return this._waypoints.map((wp) => [
@@ -123,21 +112,23 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       : [];
   }
 
-  // ── Snap waypoints onto graph ─────────────────────────────────────────────
+  // ── Snap waypoints to graph — calls graph.snapPoint() same as HTML demo ──
 
   private updateSnapPoints() {
+    const graph = this.pathFinder.getGraph();
+
     this.snappoints = this._waypoints.map((waypoint) => {
-      const coord = waypoint.geometry.coordinates as GeoJSON.Position;
-      // snapPoint() always returns a ptKey()-snapped key that exists in graph
-      const snappedKey = this.pathFinder.snapPoint(coord, distMetres);
+      const [lng, lat] = waypoint.geometry.coordinates;
+      // graph.snapPoint() is a direct port of the HTML demo's g.snapPoint()
+      const snappedKey = graph.snapPoint(lng, lat);
       const snappedCoord = snappedKey
         ? (keyToPosition(snappedKey) as [number, number])
-        : (coord as [number, number]);
+        : ([lng, lat] as [number, number]);
       return this.buildPoint(snappedCoord, "SNAPPOINT");
     });
   }
 
-  // ── Build the routing graph from GeoJSON data ─────────────────────────────
+  // ── Build graph — mirrors HTML demo's buildGraph() exactly ───────────────
 
   public loadMapData(
     corridors: GeoJSON.FeatureCollection,
@@ -147,49 +138,46 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     const coordMapByLevel = new Map<number, Map<CoordKey, GeoJSON.Position>>();
     this.coordMapByLevel = coordMapByLevel;
 
-    // ── 1. Corridors: add nodes + edges ──────────────────────────────────────
-    corridors.features.forEach((feature) => {
-      const geom = feature.geometry;
-      const lines =
-        geom.type === "LineString"
-          ? [geom.coordinates]
-          : geom.type === "MultiLineString"
-            ? geom.coordinates
-            : [];
+    // ── 1. Corridors: add nodes + edges (mirrors HTML demo's buildGraph) ────
+    //    Handles both LineString and MultiLineString, exactly as the demo does.
+    const corridorSources = [corridors];
+    // connectors lines (if any are LineStrings) are also treated as walkable
+    const allLineSources: GeoJSON.FeatureCollection[] = [corridors];
 
-      const p = (feature.properties ?? {}) as any;
-      const level = parseLevel(p);
+    allLineSources.forEach((fc) => {
+      fc.features.forEach((feature) => {
+        const p = (feature.properties ?? {}) as any;
+        const level = parseLevel(p);
+        const geom = feature.geometry;
 
-      lines.forEach((coords) => {
-        // Index per-level for connector snapping
-        coords.forEach((coord) => {
-          const k = ptKey(coord[0], coord[1]);
-          graph.addNode(coord[0], coord[1]);
+        const lines: GeoJSON.Position[][] =
+          geom.type === "LineString"
+            ? [geom.coordinates]
+            : geom.type === "MultiLineString"
+              ? geom.coordinates
+              : [];
 
-          if (level != null) {
-            if (!coordMapByLevel.has(level))
-              coordMapByLevel.set(level, new Map());
-            coordMapByLevel.get(level)!.set(k, coord as GeoJSON.Position);
+        lines.forEach((coords) => {
+          for (let i = 0; i < coords.length - 1; i++) {
+            const k1 = graph.addNode(coords[i][0], coords[i][1]);
+            const k2 = graph.addNode(coords[i + 1][0], coords[i + 1][1]);
+            if (k1 !== k2) graph.addEdge(k1, k2);
+
+            // Index by level for connector snapping
+            if (level != null) {
+              if (!coordMapByLevel.has(level))
+                coordMapByLevel.set(level, new Map());
+              const lm = coordMapByLevel.get(level)!;
+              lm.set(k1, graph.nodes[k1]);
+              lm.set(k2, graph.nodes[k2]);
+            }
           }
         });
-
-        // Add edges for consecutive coordinate pairs
-        for (let i = 0; i < coords.length - 1; i++) {
-          const k1 = graph.addNode(coords[i][0], coords[i][1]);
-          const k2 = graph.addNode(coords[i + 1][0], coords[i + 1][1]);
-          if (k1 !== k2) {
-            const w = distMetres(
-              coords[i] as GeoJSON.Position,
-              coords[i + 1] as GeoJSON.Position,
-            );
-            graph.addEdge(k1, k2, w);
-          }
-        }
       });
     });
 
-    // ── 2. Stitch disconnected corridor islands ───────────────────────────────
-    graph.stitchComponents(distMetres);
+    // ── 2. Stitch disconnected corridor islands — same as HTML demo ──────────
+    graph.stitchComponents();
 
     // ── 3. Vertical connectors (stairs / lifts) ───────────────────────────────
     const connectorNodesByName = new Map<
@@ -209,11 +197,14 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
         const levelMap = coordMapByLevel.get(level);
         if (!levelMap || levelMap.size === 0) continue;
 
-        // Find nearest corridor vertex on this level
+        // Snap connector to nearest corridor vertex on the same level
         let nearest: GeoJSON.Position | null = null;
         let minDist = Infinity;
         levelMap.forEach((coord) => {
-          const d = distMetres(f.geometry.coordinates as GeoJSON.Position, coord);
+          const d = distMetres(
+            f.geometry.coordinates as GeoJSON.Position,
+            coord,
+          );
           if (d < minDist) {
             minDist = d;
             nearest = coord;
@@ -239,7 +230,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
           .push({ level, nodeKey: connectorKey });
       }
 
-      // Link same-name connectors across levels
+      // Link same-name connectors across floors
       for (const [, nodes] of connectorNodesByName) {
         nodes.sort((a, b) => a.level - b.level);
         for (let i = 0; i < nodes.length - 1; i++) {
@@ -256,7 +247,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     this.hasLoadedGraph = true;
   }
 
-  // ── Public routing API ────────────────────────────────────────────────────
+  // ── Public API ────────────────────────────────────────────────────────────
 
   public setWaypoints(waypoints: [number, number][]) {
     this._waypoints = waypoints.map((coord) => buildPoint(coord, "WAYPOINT"));
@@ -281,13 +272,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   protected calculateDirections(originalEvent: IndoorDirectionsWaypointEvent) {
     this.lastRouteInfo = null;
 
-    if (!this.hasLoadedGraph) {
-      this.routelines = [];
-      this.draw();
-      return;
-    }
-
-    if (this.snappoints.length < 2) {
+    if (!this.hasLoadedGraph || this.snappoints.length < 2) {
       this.routelines = [];
       this.draw();
       return;
@@ -298,6 +283,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     );
 
     const routes: GeoJSON.Position[] = [];
+    const graph = this.pathFinder.getGraph();
 
     for (let i = 0; i < this.snappoints.length - 1; i++) {
       const startCoord = this.snappoints[i].geometry
@@ -305,47 +291,33 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       const endCoord = this.snappoints[i + 1].geometry
         .coordinates as GeoJSON.Position;
 
-      // Use ptKey() — same grid-snapping as addNode() — to look up keys
+      // Always look up by ptKey — same grid-snapping as addNode/snapPoint
       const startKey = ptKey(startCoord[0], startCoord[1]);
       const endKey = ptKey(endCoord[0], endCoord[1]);
 
-      // ── Guarantee connectivity after snapping ────────────────────────────
-      // If the two snap nodes ended up in different components (can happen
-      // when virtual nodes are injected), bridge them directly.
-      const graph = this.pathFinder.getGraph();
-      const components = graph.getComponents();
-      if (components.length > 1) {
-        const startComp = components.find((c) => c.has(startKey));
-        const endComp = components.find((c) => c.has(endKey));
-        if (startComp && endComp && startComp !== endComp) {
-          graph.addEdge(startKey, endKey, distMetres(startCoord, endCoord));
+      // ── Post-snap connectivity bridge — exact same logic as HTML demo ─────
+      // If snap injected isolated virtual nodes, bridge them into the main graph.
+      const compsAfterSnap = graph.getComponents();
+      if (compsAfterSnap.length > 1) {
+        const fromComp = compsAfterSnap.find((c) => c.has(startKey));
+        const toComp = compsAfterSnap.find((c) => c.has(endKey));
+        if (fromComp && toComp && fromComp !== toComp) {
+          graph.addEdge(startKey, endKey, 0);
         }
       }
 
-      let segmentVertices: string[];
-      try {
-        segmentVertices = this.pathFinder.dijkstraVertices(startKey, endKey);
-      } catch (err) {
-        console.error("IndoorDirections: routing error", err);
+      const segmentKeys = this.pathFinder.dijkstraVertices(startKey, endKey);
+
+      if (segmentKeys.length === 0) {
+        console.warn("IndoorDirections: no path found", startKey, "→", endKey);
         this.routelines = [];
         this.draw();
         return;
       }
 
-      if (segmentVertices.length === 0) {
-        console.warn(
-          "IndoorDirections: no path found between",
-          startKey,
-          endKey,
-        );
-        this.routelines = [];
-        this.draw();
-        return;
-      }
-
-      const segmentRoute = segmentVertices.map(keyToPosition);
-      if (i === 0) routes.push(...segmentRoute);
-      else routes.push(...segmentRoute.slice(1));
+      const segmentCoords = segmentKeys.map(keyToPosition);
+      if (i === 0) routes.push(...segmentCoords);
+      else routes.push(...segmentCoords.slice(1));
     }
 
     this.fire(
