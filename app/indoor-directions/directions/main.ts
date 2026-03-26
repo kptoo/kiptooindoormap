@@ -22,11 +22,16 @@ function normalizeName(v: unknown): string {
     .replace(/\s+/g, " ");
 }
 
+/**
+ * Extract a level number from a feature's properties.
+ * Checks level_id (set by airport-data-loader), level, and Level.
+ */
 function parseLevel(
   p: Record<string, any> | null | undefined,
 ): number | null {
   if (!p) return null;
-  const raw = p.level ?? p.Level ?? p.level_id;
+  // airport-data-loader normalises to level_id
+  const raw = p.level_id ?? p.level ?? p.Level;
   if (raw === null || raw === undefined || raw === "null") return null;
   const n = Number.parseInt(String(raw), 10);
   return Number.isFinite(n) ? n : null;
@@ -51,11 +56,14 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
   protected snappoints: GeoJSON.Feature<GeoJSON.Point>[] = [];
   protected routelines: GeoJSON.Feature<GeoJSON.LineString>[][] = [];
 
-  /** Per-level vertex index for connector snapping */
-  private coordMapByLevel: Map<number, Map<CoordKey, GeoJSON.Position>> =
-    new Map();
+  /** The full routing feature collection (all levels) — stored so we can
+   *  rebuild the graph when the floor changes */
+  private allRoutingFeatures: GeoJSON.FeatureCollection | null = null;
+  /** The full vertical-circulation points (all levels) */
+  private allConnectorFeatures: GeoJSON.FeatureCollection | null = null;
 
   private hasLoadedGraph = false;
+  private currentLevel: number | null = null;
   private lastRouteInfo: RouteInfo | null = null;
 
   constructor(
@@ -112,14 +120,13 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       : [];
   }
 
-  // ── Snap waypoints to graph — calls graph.snapPoint() same as HTML demo ──
+  // ── Snap waypoints ────────────────────────────────────────────────────────
 
   private updateSnapPoints() {
     const graph = this.pathFinder.getGraph();
 
     this.snappoints = this._waypoints.map((waypoint) => {
       const [lng, lat] = waypoint.geometry.coordinates;
-      // graph.snapPoint() is a direct port of the HTML demo's g.snapPoint()
       const snappedKey = graph.snapPoint(lng, lat);
       const snappedCoord = snappedKey
         ? (keyToPosition(snappedKey) as [number, number])
@@ -128,76 +135,163 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     });
   }
 
-  // ── Build graph — mirrors HTML demo's buildGraph() exactly ───────────────
+  // ── Store all data for level-based rebuilding ─────────────────────────────
 
+  /**
+   * Store the full routing + connector datasets. Call this once on app load.
+   * Then call setLevel(level) to build the graph for a specific floor.
+   *
+   * This mirrors the HTML demo's pattern: buildGraph(level) is called fresh
+   * each time the user switches floors.
+   *
+   * @param routing   All corridor + Connect line features (all levels mixed)
+   * @param connectors Optional vertical_circulation point features
+   */
   public loadMapData(
-    corridors: GeoJSON.FeatureCollection,
+    routing: GeoJSON.FeatureCollection,
     connectors?: GeoJSON.FeatureCollection,
   ) {
+    this.allRoutingFeatures = routing;
+    this.allConnectorFeatures = connectors ?? null;
+
+    // If we already know the level, build immediately.
+    // Otherwise wait for setLevel() to be called.
+    if (this.currentLevel !== null) {
+      this._buildGraphForLevel(this.currentLevel);
+    }
+  }
+
+  /**
+   * Set (or change) the current floor level and rebuild the routing graph
+   * using only features on that level — exactly like the HTML demo's
+   * buildGraph(level) which is called on every level switch.
+   */
+  public setLevel(level: number) {
+    if (this.currentLevel === level && this.hasLoadedGraph) return;
+    this.currentLevel = level;
+
+    if (this.allRoutingFeatures) {
+      this._buildGraphForLevel(level);
+      // If there are active waypoints, re-snap and re-route on the new floor
+      if (this._waypoints.length >= 2) {
+        this.updateSnapPoints();
+        const evt = new IndoorDirectionsWaypointEvent("setwaypoints", undefined);
+        this.calculateDirections(evt);
+      }
+    }
+  }
+
+  /**
+   * Build the routing graph for a specific level.
+   *
+   * This is a direct TypeScript port of the HTML demo's buildGraph(level):
+   *
+   *   function buildGraph(level) {
+   *     const g = new Graph();
+   *     ['corridors','connect'].forEach(src => {
+   *       (allData[src]?.features||[]).forEach(f => {
+   *         const p = f.properties||{};
+   *         if (String(p.Level||p.level||'3') !== level) return;  // ← KEY FILTER
+   *         ...add nodes + edges...
+   *       });
+   *     });
+   *     g.stitchComponents();
+   *     return g;
+   *   }
+   */
+  private _buildGraphForLevel(level: number) {
     const graph = new Graph();
-    const coordMapByLevel = new Map<number, Map<CoordKey, GeoJSON.Position>>();
-    this.coordMapByLevel = coordMapByLevel;
+    const levelStr = String(level);
 
-    // ── 1. Corridors: add nodes + edges (mirrors HTML demo's buildGraph) ────
-    //    Handles both LineString and MultiLineString, exactly as the demo does.
-    const corridorSources = [corridors];
-    // connectors lines (if any are LineStrings) are also treated as walkable
-    const allLineSources: GeoJSON.FeatureCollection[] = [corridors];
+    // ── 1. Corridor + Connect features — ONLY for the requested level ─────────
+    //    This is the critical filter that the HTML demo applies.
+    //    Without it, edges from other floors pollute the graph and cause the
+    //    router to produce paths that "jump" off the visible corridor network.
+    const routing = this.allRoutingFeatures;
+    if (!routing) return;
 
-    allLineSources.forEach((fc) => {
-      fc.features.forEach((feature) => {
+    routing.features.forEach((feature) => {
+      const p = (feature.properties ?? {}) as any;
+
+      // Normalise level to string for comparison — same as HTML demo's
+      // String(p.Level||p.level||'3') !== level
+      const featureLevelRaw =
+        p.level_id ?? p.Level ?? p.level ?? null;
+      const featureLevelStr =
+        featureLevelRaw !== null && featureLevelRaw !== undefined
+          ? String(Number.parseInt(String(featureLevelRaw), 10))
+          : null;
+
+      // ★ Skip features that don't belong to the current level ★
+      if (featureLevelStr !== levelStr) return;
+
+      const geom = feature.geometry;
+      const lines: GeoJSON.Position[][] =
+        geom.type === "LineString"
+          ? [geom.coordinates]
+          : geom.type === "MultiLineString"
+            ? geom.coordinates
+            : [];
+
+      lines.forEach((coords) => {
+        for (let i = 0; i < coords.length - 1; i++) {
+          const k1 = graph.addNode(coords[i][0], coords[i][1]);
+          const k2 = graph.addNode(coords[i + 1][0], coords[i + 1][1]);
+          if (k1 !== k2) graph.addEdge(k1, k2);
+        }
+      });
+    });
+
+    if (Object.keys(graph.nodes).length === 0) {
+      console.warn(
+        `IndoorDirections: no corridor features found for level ${level}`,
+      );
+      // Don't mark as loaded so we don't route on an empty graph
+      return;
+    }
+
+    // ── 2. Stitch disconnected corridor islands — same as HTML demo ──────────
+    graph.stitchComponents();
+
+    // ── 3. Vertical connectors — same logic as before ─────────────────────────
+    if (this.allConnectorFeatures?.features?.length) {
+      const connectorNodesByName = new Map<
+        string,
+        Array<{ level: number; nodeKey: string }>
+      >();
+
+      // Build per-level corridor node index for nearest-node snapping
+      const coordMapByLevel = new Map<number, Map<string, GeoJSON.Position>>();
+      routing.features.forEach((feature) => {
         const p = (feature.properties ?? {}) as any;
-        const level = parseLevel(p);
+        const fl = parseLevel(p);
+        if (fl == null) return;
         const geom = feature.geometry;
-
         const lines: GeoJSON.Position[][] =
           geom.type === "LineString"
             ? [geom.coordinates]
             : geom.type === "MultiLineString"
               ? geom.coordinates
               : [];
-
         lines.forEach((coords) => {
-          for (let i = 0; i < coords.length - 1; i++) {
-            const k1 = graph.addNode(coords[i][0], coords[i][1]);
-            const k2 = graph.addNode(coords[i + 1][0], coords[i + 1][1]);
-            if (k1 !== k2) graph.addEdge(k1, k2);
-
-            // Index by level for connector snapping
-            if (level != null) {
-              if (!coordMapByLevel.has(level))
-                coordMapByLevel.set(level, new Map());
-              const lm = coordMapByLevel.get(level)!;
-              lm.set(k1, graph.nodes[k1]);
-              lm.set(k2, graph.nodes[k2]);
-            }
-          }
+          coords.forEach((coord) => {
+            const k = ptKey(coord[0], coord[1]);
+            if (!coordMapByLevel.has(fl)) coordMapByLevel.set(fl, new Map());
+            coordMapByLevel.get(fl)!.set(k, coord as GeoJSON.Position);
+          });
         });
       });
-    });
 
-    // ── 2. Stitch disconnected corridor islands — same as HTML demo ──────────
-    graph.stitchComponents();
-
-    // ── 3. Vertical connectors (stairs / lifts) ───────────────────────────────
-    const connectorNodesByName = new Map<
-      string,
-      Array<{ level: number; nodeKey: string }>
-    >();
-
-    if (connectors?.features?.length) {
-      for (const f of connectors.features) {
+      for (const f of this.allConnectorFeatures.features) {
         if (f.geometry.type !== "Point") continue;
-
         const props = (f.properties ?? {}) as any;
         const name = normalizeName(props.name);
-        const level = parseLevel(props);
-        if (!name || level == null) continue;
+        const fl = parseLevel(props);
+        if (!name || fl == null) continue;
 
-        const levelMap = coordMapByLevel.get(level);
+        const levelMap = coordMapByLevel.get(fl);
         if (!levelMap || levelMap.size === 0) continue;
 
-        // Snap connector to nearest corridor vertex on the same level
         let nearest: GeoJSON.Position | null = null;
         let minDist = Infinity;
         levelMap.forEach((coord) => {
@@ -221,13 +315,15 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
           (f.geometry.coordinates as GeoJSON.Position)[1],
         );
 
-        graph.addEdge(connectorKey, snappedKey, minDist);
-
-        if (!connectorNodesByName.has(name))
-          connectorNodesByName.set(name, []);
-        connectorNodesByName
-          .get(name)!
-          .push({ level, nodeKey: connectorKey });
+        // Only link to graph if snapped key actually exists (same level)
+        if (graph.nodes[snappedKey]) {
+          graph.addEdge(connectorKey, snappedKey, minDist);
+          if (!connectorNodesByName.has(name))
+            connectorNodesByName.set(name, []);
+          connectorNodesByName
+            .get(name)!
+            .push({ level: fl, nodeKey: connectorKey });
+        }
       }
 
       // Link same-name connectors across floors
@@ -247,7 +343,7 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
     this.hasLoadedGraph = true;
   }
 
-  // ── Public API ────────────────────────────────────────────────────────────
+  // ── Public routing API ────────────────────────────────────────────────────
 
   public setWaypoints(waypoints: [number, number][]) {
     this._waypoints = waypoints.map((coord) => buildPoint(coord, "WAYPOINT"));
@@ -291,12 +387,10 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
       const endCoord = this.snappoints[i + 1].geometry
         .coordinates as GeoJSON.Position;
 
-      // Always look up by ptKey — same grid-snapping as addNode/snapPoint
       const startKey = ptKey(startCoord[0], startCoord[1]);
       const endKey = ptKey(endCoord[0], endCoord[1]);
 
-      // ── Post-snap connectivity bridge — exact same logic as HTML demo ─────
-      // If snap injected isolated virtual nodes, bridge them into the main graph.
+      // Post-snap connectivity bridge — same as HTML demo
       const compsAfterSnap = graph.getComponents();
       if (compsAfterSnap.length > 1) {
         const fromComp = compsAfterSnap.find((c) => c.has(startKey));
@@ -326,7 +420,6 @@ export default class IndoorDirections extends IndoorDirectionsEvented {
 
     this.routelines = [this.buildRouteLines(routes)];
 
-    // ── Route metadata ───────────────────────────────────────────────────────
     let totalMetres = 0;
     for (let i = 0; i < routes.length - 1; i++) {
       totalMetres += distMetres(routes[i], routes[i + 1]);
