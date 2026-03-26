@@ -111,36 +111,42 @@ export default function NavigationView({
       const departureCoord = departureGeo.coordinates as [number, number];
       const destinationCoord = destinationGeo.coordinates as [number, number];
 
+      // setWaypoints() runs calculateDirections() synchronously — routeInfo
+      // and routelinesCoordinates are both populated by the time it returns.
       indoorDirections.setWaypoints([departureCoord, destinationCoord]);
 
-      const routeGeometry =
-        indoorDirections.routelinesCoordinates?.[0]?.[0]?.geometry;
-      const coordinates = routeGeometry?.coordinates as
-        | [number, number][]
-        | undefined;
+      // ── Read results AFTER setWaypoints returns (it's synchronous) ──────────
+      // Use getLastRouteInfo() as the authoritative success signal — it is set
+      // inside calculateDirections() only when a valid path was found.
+      const info = indoorDirections.getLastRouteInfo();
 
-      if (!coordinates || coordinates.length < 2) {
+      if (!info) {
+        // No route info means calculateDirections found no path.
         setRouteError(
           "❌ No route found — the locations may not be connected on this floor.",
         );
         return;
       }
 
-      // Fit map to route — same as HTML demo's fitBounds with padding:60
-      let bounds = new LngLatBounds(coordinates[0], coordinates[0]);
-      for (const coord of coordinates) bounds = bounds.extend(coord);
-      map?.fitBounds(bounds, { padding: 60, speed: 0.5 });
+      // Fit map to route bounds using the actual route line coordinates.
+      const routeGeometry =
+        indoorDirections.routelinesCoordinates?.[0]?.[0]?.geometry;
+      const coordinates = routeGeometry?.coordinates as
+        | [number, number][]
+        | undefined;
 
-      // Show route info — mirrors HTML demo's status bar message
-      const info = indoorDirections.getLastRouteInfo();
-      if (info) {
-        setRouteInfo({
-          distanceMetres: info.distanceMetres,
-          walkMinutes: info.walkMinutes,
-          fromName: departureValue,
-          toName: destinationValue,
-        });
+      if (coordinates && coordinates.length >= 2) {
+        let bounds = new LngLatBounds(coordinates[0], coordinates[0]);
+        for (const coord of coordinates) bounds = bounds.extend(coord);
+        map?.fitBounds(bounds, { padding: 60, speed: 0.5 });
       }
+
+      setRouteInfo({
+        distanceMetres: info.distanceMetres,
+        walkMinutes: info.walkMinutes,
+        fromName: departureValue,
+        toName: destinationValue,
+      });
     } catch (error) {
       console.error("Error during routing:", error);
       setRouteError(
